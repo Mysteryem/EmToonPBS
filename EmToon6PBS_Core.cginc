@@ -1,16 +1,15 @@
-// TODO: Specular ramp selector
-//       could use a mask texture
-//       could use UV2 x/y coord with a specifically horizontal or specifically vertical ramp (allowing either simultaneously won't be possible with this)
 // TODO: Reuse samplers for textures where possible (ramp should use a sampler set to always clamp)
+// TODO: Detail normals, detail albedo, choosable UV set (may need to change vert function, aren't we out of passable interpolator variables?)
 #include "EmShaderFunctionsToon5.cginc"
 
 uniform fixed4 _Color;
 uniform UNITY_DECLARE_TEX2D(_MainTex);
 uniform float4 _MainTex_ST;
-uniform fixed _SaturationAdjustment;
 
-uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_SpecularRamp);
-uniform EM_DECLARE_SAMPLER(_linear_clamp);
+//uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_LowLightTex);
+//uniform float4 _LowLightTex_ST;
+
+uniform fixed _SaturationAdjustment;
 
 uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_EmissionMap);
 uniform float4 _EmissionMap_ST;
@@ -24,23 +23,28 @@ uniform half _ViewDirectionDiffuseBoost;
 uniform fixed _DynamicShadowSharpness;
 uniform fixed _DynamicShadowLift;
 
-uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_NormalMap);
-uniform float4 _NormalMap_ST;
-uniform half _NormalMapStrength;
+uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_BumpMap);
+uniform float4 _BumpMap_ST;
+uniform half _BumpScale;
+
+uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_OcclusionMap);
+uniform float4 _OcclusionMap_ST;
+uniform half _OcclusionStrength;
 
 uniform fixed _Glossiness;
 uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_MetallicGlossMap);
 uniform float4 _MetallicGlossMap_ST;
 
-// TODO: Remove
+// Was going to remove, but kept specifically for toon specular
 uniform fixed4 _SpecularColour;
-// TODO: Remove
+uniform fixed _ToonSpecular;
+uniform fixed _ToonSpecularSharpness;
+// Was going to remove, but kept specifically for toon specular
 uniform sampler2D _SpecularMap;
 // TODO: Remove
 uniform float4 _SpecularMap_ST;
 uniform fixed _ShDirectionalSpecularOn;
 uniform fixed _ShReflectionSpecularOn;
-uniform fixed _ExtendSpecularRange;
 
 uniform samplerCUBE _ReflectionCubemap;
 uniform float4 _ReflectionCubemap_HDR;
@@ -62,6 +66,8 @@ uniform fixed _FixedHueShift;
 #if defined(Geometry)
 uniform half4 _OutlineColor;
 uniform half _OutlineWidth;
+uniform UNITY_DECLARE_TEX2D(_OutlineMask);
+uniform float4 _OutlineMask_ST;
 #endif
 
 struct VertexData {
@@ -184,7 +190,9 @@ VertexOutput vert (VertexData v) {
         {	
             float4 posWorld = (mul(unity_ObjectToWorld, IN[i].vertex));
             //half outlineWidthMask = tex2Dlod(_OutlineMask, float4(IN[i].uv, 0, 0));
-            float3 outlineWidth = _OutlineWidth * .01;
+            //half outlineWidthMask = EM_SAMPLE_TEX2D_LOD_SAMPLER(_OutlineMask, _MainTex, IN[i].uv0, 0);
+            half outlineWidthMask = EM_SAMPLE_TEX2D_LOD(_OutlineMask, TRANSFORM_TEX(IN[i].uv0, _OutlineMask), 1);
+            float3 outlineWidth = _OutlineWidth * .01 * outlineWidthMask;
 
             outlineWidth *= min(distance(posWorld, _WorldSpaceCameraPos) * 3, 1);
             float4 outlinePos = float4(IN[i].vertex + normalize(IN[i].normal) * outlineWidth, 1);
@@ -263,6 +271,12 @@ half4 frag(
     
     half3 lightColor = _LightColor0.rgb;
     
+    half4 sampledOcclusion = UNITY_SAMPLE_TEX2D_SAMPLER(_OcclusionMap, _MainTex, TRANSFORM_TEX(i.uv0, _OcclusionMap));
+    half occlusion = grayscale(LerpOneTo(sampledOcclusion.rgb, _OcclusionStrength));
+    half UNUSED_g = sampledOcclusion.g;
+    half UNUSED_b = sampledOcclusion.b;
+    half UNUSED_a = sampledOcclusion.a;
+    
     // r = metallic
     // g = smoothnessY
     // b = anisotropy
@@ -274,8 +288,8 @@ half4 frag(
     _Anisotropy *= metallicGlossMap.b;
     
     half3x3 tangentTransform = half3x3( i.tangentDir, i.bitangentDir, i.normalDir);
-    fixed3 _NormalMap_var = UnpackNormal(UNITY_SAMPLE_TEX2D_SAMPLER(_NormalMap, _MainTex, TRANSFORM_TEX(i.uv0, _NormalMap)));
-    half3 normalLocal = half3((_NormalMapStrength * _NormalMap_var.rg), _NormalMap_var.b);
+    fixed3 _BumpMap_var = UnpackNormal(UNITY_SAMPLE_TEX2D_SAMPLER(_BumpMap, _MainTex, TRANSFORM_TEX(i.uv0, _BumpMap)));
+    half3 normalLocal = half3((_BumpScale * _BumpMap_var.rg), _BumpMap_var.b);
     half3 normalDirection = normalize(mul( normalLocal, tangentTransform )); // Perturbed normals
     half3 doubleSidedNormals = normalDirection;
     half3 doubleSidedTangent = cross(i.bitangentDir, doubleSidedNormals);
@@ -365,14 +379,16 @@ half4 frag(
     half3 dynamicLightAverageComponent = 0;
     // Should always be active so no point preprocessing
 //#if defined(POINT) || defined(SPOT) || defined(DIRECTIONAL) || defined(POINT_COOKIE) || defined(DIRECTIONAL_COOKIE)
-    // TODO: There's probably a better way to call the light and shadow parts separately instead of calling light+shadow and light-only separately
-    UNITY_LIGHT_ATTENUATION(attenuation, i, i.posWorld.xyz);
-    half3 rawDynamicLight = attenuation * _LightColor0.rgb;
-    EM_LIGHT_ATTENUATION(attenuationNoShadows, i, i.posWorld.xyz);//gives us a float attenuationNoShadows
+    EM_LIGHT_ATTENUATION(lightAttenuation, i, i.posWorld.xyz);
+    // TODO: What difference does it make doing the rounding here?
+    //lightAttenuation.shadow = lerp(lightAttenuation.shadow, round(lightAttenuation.shadow), _DynamicShadowSharpness); 
+    fixed attenuation = lightAttenuation.light * lightAttenuation.shadow;
+    fixed attenuationNoShadows = lightAttenuation.light;
+    fixed shadows = lightAttenuation.light * (1 - lightAttenuation.shadow);
+    
     dynamicLightAverageComponent = attenuationNoShadows * _LightColor0.rgb; 
     
     // Get shadows and control their strength/sharpness(xiexe style)
-    half3 shadows = attenuationNoShadows - attenuation;
     shadows = lerp(shadows, round(shadows), _DynamicShadowSharpness);
     half3 attenuationNoShadowLift = attenuationNoShadows - shadows;
     shadows *= (1 - _DynamicShadowLift);
@@ -435,6 +451,7 @@ half4 frag(
     }
 #endif
 
+    half3 finalDiffuseLight = bakedLightComponent + dynamicLightComponent + vertexLightComponent;
 
     // ------- Hue setup
 #if defined(HMD_HUE)
@@ -473,6 +490,10 @@ half4 frag(
 #endif
     
     // ------- Diffuse texture
+    
+    // Allow using a second texture that is used as light decreases?
+    //half lowLightTexturePick = saturate(1-pow(max(0,grayscale(finalDiffuseLight)*2-1), 1));
+    //fixed4 sampledMainTexture = lerp(UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(i.uv0, _MainTex)), UNITY_SAMPLE_TEX2D_SAMPLER(_LowLightTex,_MainTex, TRANSFORM_TEX(i.uv0, _LowLightTex)), lowLightTexturePick);
     fixed4 sampledMainTexture = UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(i.uv0, _MainTex)) * _Color * half4(i.color.rgb, 1);
     
 #if defined(HMD_HUE)
@@ -488,7 +509,7 @@ half4 frag(
     sampledMainTexture = lerp(sampledMainTexture, fixed4(node_1294,1), hueMask);
 #endif
     
-    fixed3 diffuseComponent = lerp((sampledMainTexture), grayscale(sampledMainTexture.rgb), (-1 * _SaturationAdjustment));
+    fixed3 diffuseComponent = lerp((sampledMainTexture), grayscale(sampledMainTexture.rgb), (-1 * (_SaturationAdjustment)));
 
     // -------- Direct and Indirect specular
     half3 __specColor;
@@ -528,10 +549,9 @@ half4 frag(
     half reflectionMipAverage = 100;
     half reflectionFallbackLuminance = grayscale(texCUBElod(_ReflectionCubemap,float4(glossyEnvironmentData.reflUVW,reflectionMipAverage)).rgb);
     half lightLuminance = grayscale(bakedLightAverageComponent + dynamicLightAverageComponent + vertexLightComponent);
-    half fallbackReflectionAdjust = reflectionFallbackLuminance == 0 ? 0 : lightLuminance/reflectionFallbackLuminance;
+    //half fallbackReflectionAdjust = reflectionFallbackLuminance == 0 ? 0 : lightLuminance/reflectionFallbackLuminance;
     
     glossyEnvironmentData.reflectionFallbackMultiplier = lightLuminance;
-    half occlusion = 1;
 
     half3 emIndirectSpecular = Em_IndirectSpecular(fragmentCommonData, occlusion, glossyEnvironmentData, _ReflectionCubemap, _ReflectionCubemap_HDR, _Usecubemapinsteadofreflectionprobes);
     #if defined(Geometry)
@@ -549,11 +569,10 @@ half4 frag(
     
     
     // ------- Specular
+    // -- Dynamic Light specular
+    
     half anisoSpecLimitSmoothness = saturate(2 * max(_Glossiness,_SmoothnessY));
     
-    half3 specularDirection = viewReflectDirection;
-    half3 darkenSource = 0;
-    half3 sharedLight = 0;
     half3 sharedSpecular = 0;
     
     half tDotV = dot(viewDirection, doubleSidedTangent);
@@ -563,6 +582,19 @@ half4 frag(
     half roughnessX = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughnessX);
     half roughnessY = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughnessY);
     half roughness = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughness);
+    fixed4 sampledSpecularColourMap = tex2D(_SpecularMap, TRANSFORM_TEX(i.uv0, _SpecularMap));
+    // We want a really quick blend from normal style to toon style and to then use the rest of the slider/map value to control how smooth the edges of the toon specular are
+    // We have to be careful not to blend into toon specular right at 0 as the immediate blend between ~95% normal an ~5% toon is horrible, any values near to zero should result in normal specular to account for mipmapping
+    fixed isToonSpecular = sampledSpecularColourMap.a * _ToonSpecular;
+    // [0,0.1) -> 1-0 = 1
+    // (0.1,1] -> lerp between 1-0 = 1 and 1-1 = 0
+    fixed toonSpecularSoftness = saturate(1 - (1.1 * (isToonSpecular) - 0.1));
+    //isToonSpecular = 1 - pow(1 - isToonSpecular, 5);
+    // [0,0.1) -> 100% smooth
+    // (0.1,0.2) -> Lerp between smooth and toon
+    // (0.2,1] -> 100% toon
+    isToonSpecular = saturate(10 * isToonSpecular - 1);
+    fixed toonSpecularBrightness = sqr(max(fragmentCommonData.smoothnessX, fragmentCommonData.smoothnessY));
 #if defined(POINT) || defined(SPOT) || defined(DIRECTIONAL) || defined(POINT_COOKIE) || defined(DIRECTIONAL_COOKIE) 
     
     half nDotH = dot(doubleSidedNormals, halfLightDirection);
@@ -584,30 +616,52 @@ half4 frag(
 #	ifdef UNITY_COLORSPACE_GAMMA
     anisotropicSpecular = sqrt(max(1e-2h, anisotropicSpecular));
 #	endif
-    // specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
+    // Supposedly specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
     anisotropicSpecular = max(0, anisotropicSpecular * nDotL);
     // Limit overbrightening on weird normals
     anisotropicSpecular = lerp(anisotropicSpecular, min(anisotropicSpecular, 2*(anisoSpecLimitSmoothness + grayscale(_LightColor0.rgb * attenuationNoShadows))), _CapAnisoSpecular);
     
     halfLightSpecular = lerp(halfLightSpecular, anisotropicSpecular, fragmentCommonData.anisotropy);
     
-    // NOTE: Was clamped 0-1
-    half3 dynamicSpecular = halfLightSpecular * _LightColor0.rgb * attenuationNoShadowLift;
+    // TODO: Should this be done before the lerp?
+    halfLightSpecular = halfLightSpecular * saturate(nDotL);
     
-    // Extend range
-    halfLightSpecular *= lerp(1, 0.5, _ExtendSpecularRange);
-    fixed3 sampledSpecularRamp = EM_SAMPLE_TEX2D_LOD_SAMPLER(_SpecularRamp, _linear_clamp, float2(halfLightSpecular, halfLightSpecular), 0).rgb;
-    // Extend range
-    sampledSpecularRamp *= lerp(1, 2, _ExtendSpecularRange);
+    half3 dynamicMaterialSpecularInfluence = FresnelTerm(fragmentCommonData.specColor, nDotH);
+
+    half dynamicToonSpecular = toonSpecularBrightness
+                               //the remap gets artifacts when zoomed out when >1
+                               * SpecialRemap(toonSpecularSoftness, 1, saturate(halfLightSpecular))
+                               / Luminance(dynamicMaterialSpecularInfluence);
     
-    //return half4(fragmentCommonData.specColor, 1);
+    half dynamicSpecularBase = lerp(halfLightSpecular, dynamicToonSpecular, isToonSpecular);
     
-    dynamicSpecular *= FresnelTerm(fragmentCommonData.specColor, nDotH) * sampledSpecularRamp * tex2D(_SpecularMap, TRANSFORM_TEX(i.uv0, _SpecularMap)).rgb * _SpecularColour.rgb;
-    sharedSpecular += max(0,dynamicSpecular * saturate(nDotL));
+    half3 dynamicSpecular = _LightColor0.rgb * // Light colour
+                            //attenuationNoShadowLift * // Light attenuation
+                            attenuation * // Light attenuation
+                            dynamicMaterialSpecularInfluence * // Material specular colour influence
+                            dynamicSpecularBase * // Specular intensity
+                            sampledSpecularColourMap.rgb * // Specular map property
+                            _SpecularColour.rgb; // Specular colour property
+    sharedSpecular += max(0, dynamicSpecular);
 #endif
 #if defined(UNITY_PASS_FORWARDBASE)
-    // SH specular
+    bool shDirectionalSpecularAlwaysOn = _ShDirectionalSpecularOn == 1;
+    bool shDirectionalSpecularOnIfNoDynamic = _ShDirectionalSpecularOn == 2;
+    bool shReflectionSpecularAlwaysOn = _ShReflectionSpecularOn == 1;
+    bool shReflectionSpecularOnIfNoDynamicOrDirectional = _ShReflectionSpecularOn == 2;
+    
+    bool noDynamicLight = !any(_LightColor0.rgb);
+    
+    bool shDirectionalSpecularOn = shDirectionalSpecularAlwaysOn || (shDirectionalSpecularOnIfNoDynamic && !any(_LightColor0.rgb));
+    
+    // -- SH Dominant Direction Specular
     half3 shLightDir = calcLightDirSH(i.posWorld.xyz);
+    
+    bool noSHDirectionalLight = !any(shLightDir);
+    
+    bool shReflectionSpecularOn = shReflectionSpecularAlwaysOn || (shReflectionSpecularOnIfNoDynamicOrDirectional && noDynamicLight && noSHDirectionalLight);
+
+    
     half3 shHalfLightDirection = normalize(shLightDir + viewDirection);
     half nDotSHH = dot(doubleSidedNormals, shHalfLightDirection);
     half tDotSHH = dot(doubleSidedTangent, shHalfLightDirection);
@@ -626,35 +680,44 @@ half4 frag(
     anisotropicSHSpecular = sqrt(max(1e-2h, anisotropicSHSpecular));
 #	endif
     // note: was 2*shLightDir
+    
     half3 shSpecularColour = max(0,ShadeSH9(half4(1*shLightDir, 1))-ShadeSH9(half4(0,0,0,1)));
     
-    // specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
+    // Supposedly specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
     anisotropicSHSpecular = max(0, anisotropicSHSpecular * nDotSHL);
+    // Limit overbrightening on weird normals
     anisotropicSHSpecular = lerp(anisotropicSHSpecular, min(anisotropicSHSpecular, 2*(anisoSpecLimitSmoothness + grayscale(shSpecularColour))), _CapAnisoSpecular);
     shHalfLightSpecular = lerp(shHalfLightSpecular, anisotropicSHSpecular, fragmentCommonData.anisotropy);
     
-    //half3 shSpecularColour = max(0,ShadeSH9(half4(shLightDir, 1)));
-    half3 shDirectionalSpecular = shHalfLightSpecular * shSpecularColour;
-    // Extend range
-    shHalfLightSpecular *= lerp(1, 0.5, _ExtendSpecularRange);
-    fixed3 sampledDirectionalSHSpecularRamp = EM_SAMPLE_TEX2D_LOD_SAMPLER(_SpecularRamp, _linear_clamp, float2(shHalfLightSpecular, shHalfLightSpecular), 0).rgb;
-    // Extend range
-    sampledDirectionalSHSpecularRamp *= lerp(1, 2, _ExtendSpecularRange);
-    shDirectionalSpecular *= FresnelTerm(fragmentCommonData.specColor, nDotSHH) * sampledDirectionalSHSpecularRamp * tex2D(_SpecularMap, TRANSFORM_TEX(i.uv0, _SpecularMap)).rgb * _SpecularColour.rgb;
-    shDirectionalSpecular *= _ShDirectionalSpecularOn * saturate(nDotSHL);
+    shHalfLightSpecular *= saturate(nDotSHL);
     
+    half3 shDirectionalMaterialSpecularInfluence = FresnelTerm(fragmentCommonData.specColor, nDotSHH);
+    
+    half shDirectionalToonSpecular = toonSpecularBrightness
+                                     //the remap gets artifacts when zoomed out when >1
+                                     * SpecialRemap(toonSpecularSoftness, 1, saturate(shHalfLightSpecular))
+                                     / Luminance(shDirectionalMaterialSpecularInfluence);
+    
+    half shDirectionalSpecularBase = lerp(shHalfLightSpecular, shDirectionalToonSpecular, isToonSpecular);
+    
+    half3 shDirectionalSpecular = shSpecularColour * // 'Light' colour and attenuation
+                                  shDirectionalMaterialSpecularInfluence * // Material specular colour influence
+                                  shDirectionalSpecularBase * // Specular intensity
+                                  sampledSpecularColourMap.rgb * // Specular map property
+                                  _SpecularColour.rgb * // Specular colour property
+                                  shDirectionalSpecularOn; // Optionally disable sh directional specular
     
     // todo: multiply by the specular colour and colour map!!
-    // SH specular extra
+    // -- SH Reflect Direction Specular
     half3 shSpecularDirection = viewReflectDirection;
-    half shSpecularFresnel = saturate(0.77*pow(dot(doubleSidedNormals, normalize(doubleSidedNormals + viewDirection)),1));
+    //half shSpecularFresnel = saturate(0.77*pow(dot(doubleSidedNormals, normalize(doubleSidedNormals + viewDirection)),1));
     // typically lighting will be coming from above and how this works the lighting is centred around the point in the middle of the screen
     // todo: can anythign be done with view position?
-    half3 shSpecularDirectionBoost = half3(0,0,0);//half3(0,-0.3,0);
+    //half3 shSpecularDirectionBoost = half3(0,0,0);//half3(0,-0.3,0);
     
     //half3 shReflectDirection = normalize(shSpecularDirectionBoost + lerp(normalize(doubleSidedNormals + viewDirection),viewReflectDirection,shSpecularFresnel));
-    half3 shReflectDirection = normalize(doubleSidedNormals + viewDirection);
-    half3 shHalfReflectDirection = normalize(shReflectDirection + viewDirection);
+    half3 shReflectDirection = viewDirection;
+    half3 shHalfReflectDirection = normalize(doubleSidedNormals * 0 + viewDirection * 2);
     half nDotSHRH = dot(doubleSidedNormals, shHalfReflectDirection);
     half tDotSHRH = dot(doubleSidedTangent, shHalfReflectDirection);
     half bDotSHRH = dot(doubleSidedBitangent, shHalfReflectDirection);
@@ -662,7 +725,7 @@ half4 frag(
     half tDotSHR = dot(doubleSidedTangent, shReflectDirection);
     half bDotSHR = dot(doubleSidedBitangent, shReflectDirection);
     
-    half shSpecular = GGXNormalDistribution(roughness, nDotSHR);
+    half shSpecular = GGXNormalDistribution(roughness, dot(doubleSidedNormals, viewDirection));
     
     half anisotropicSHRSpecularVisibility = SmithJointGGXAnisotropic(tDotV, bDotV, nDotV, tDotSHR, bDotSHR, nDotSHR, roughnessX, roughnessY);
     anisotropicSHRSpecularVisibility = max(0,anisotropicSHRSpecularVisibility);
@@ -680,28 +743,37 @@ half4 frag(
 
     half3 bakedSpecColour = max(sss, 0);
 
-    // specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
+    // Supposedly specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
     anisotropicSHRSpecular = max(0, anisotropicSHRSpecular * nDotSHR);
+    // Limit overbrightening on weird normals
     anisotropicSHRSpecular = lerp(anisotropicSHRSpecular, min(anisotropicSHRSpecular, 2 * (anisoSpecLimitSmoothness + grayscale(bakedSpecColour))), _CapAnisoSpecular);
 
     shSpecular = lerp(shSpecular, anisotropicSHRSpecular, fragmentCommonData.anisotropy);
    
-
+    // Should this be used?
+    // 0.1 at 0.7 smoothness
+    // 0.5 at 0.3 smoothness
+    shSpecular = shSpecular * saturate(dot(doubleSidedNormals, viewDirection));
+    //shSpecular = shSpecular * saturate(nDotSHR);
     
-    half3 bakedSpecular = shSpecular * bakedSpecColour;
-    // Extend range
-    shSpecular *= lerp(1, 0.5, _ExtendSpecularRange);
-    float rampUV = lerp(shSpecular, 0.5 * shSpecular, _ExtendSpecularRange);
-    fixed3 sampledSHSpecularRamp = EM_SAMPLE_TEX2D_LOD_SAMPLER(_SpecularRamp, _linear_clamp, float2(rampUV, rampUV), 0).rgb;
-    // Extend range
-    sampledSHSpecularRamp *= lerp(1, 2, _ExtendSpecularRange);
-    //return shSpecular;
-    //return half4(sampledSHSpecularRamp, 1);
-    bakedSpecular *= FresnelTerm(fragmentCommonData.specColor, nDotSHRH) * sampledSHSpecularRamp * tex2D(_SpecularMap, TRANSFORM_TEX(i.uv0, _SpecularMap)).rgb * _SpecularColour.rgb;
-    //bakedSpecular = sampledSHSpecularRamp * bakedSpecColour * FresnelTerm(fragmentCommonData.specColor, nDotSHRH);
-    bakedSpecular *= _ShReflectionSpecularOn;
-    //return half4(bakedSpecular, 1);
-    half bakedShDirectionLerp = saturate(pow(2*max(0,nDotSHL+0.5),1));
+    
+    half3 shReflectMaterialSpecularInfluence = FresnelTerm(fragmentCommonData.specColor, nDotSHR);
+    
+    half shToonSpecular = toonSpecularBrightness
+                          //the remap gets artifacts when zoomed out when >1
+                          * SpecialRemap(toonSpecularSoftness, 1, saturate(shSpecular))
+                          / Luminance(shReflectMaterialSpecularInfluence);
+    
+    half shSpecularBase = lerp(shSpecular, shToonSpecular, isToonSpecular);
+    
+    half3 bakedSpecular = bakedSpecColour * // 'Light' colour and attenuation
+                          shReflectMaterialSpecularInfluence * // Material specular colour influence
+                          shSpecularBase * // Specular intensity
+                          sampledSpecularColourMap.rgb * // Specular map property
+                          _SpecularColour.rgb * // Specular colour property
+                          shReflectionSpecularOn; // Optionally disable sh reflect specular
+    
+    //half bakedShDirectionLerp = saturate(pow(2*max(0,nDotSHL+0.5),1));
     
     sharedSpecular += max(0,max(bakedSpecular, shDirectionalSpecular));
     
@@ -730,10 +802,47 @@ half4 frag(
 
     half specularKill = any(fragmentCommonData.specColor) ? 1.0 : 0.0;
     half grazingTerm = saturate(max(fragmentCommonData.smoothnessX, fragmentCommonData.smoothnessY) + (1-fragmentCommonData.oneMinusReflectivity));
-    half3 finalColor = fragmentCommonData.diffColor * (bakedLightComponent + dynamicLightComponent + vertexLightComponent)
+
+    half indirectSpecularFresnelLerp = FresnelLerp(fragmentCommonData.specColor, grazingTerm, saturate(dot(fragmentCommonData.normalWorld, -fragmentCommonData.eyeVec)));
+    //indirectSpecularFresnelLerp = lerp(indirectSpecularFresnelLerp, 0, isToonSpecular);
+
+   
+    half3 finalDiffuse = fragmentCommonData.diffColor * finalDiffuseLight;
+    // Removes indirect lighting from reflection probes in nearly unlit to completely unlit environments
+    #if defined(UNITY_PASS_FORWARDBASE)
+    _LightColor0.rgb;
+    // baked light seems way off?
+    half indirectSpecularModifier = saturate(grayscale((bakedLightAverageComponent*100 + (vertexLightComponent + dynamicLightAverageComponent) * 10)));
+    #else
+    // There isn't any indirect specular anyway since we're in a forwardadd pass, but maybe this will let the compiler be even more aggressive with removing unneeded code
+    half indirectSpecularModifier = 0;
+    #endif
+    half3 finalColor = finalDiffuse * occlusion
                        + sharedSpecularComponent * specularKill
-                       + surfaceReduction * emIndirectSpecular * FresnelLerp(fragmentCommonData.specColor, grazingTerm, saturate(dot(fragmentCommonData.normalWorld, -fragmentCommonData.eyeVec)));
+                       + surfaceReduction * emIndirectSpecular * indirectSpecularFresnelLerp * indirectSpecularModifier;
     finalColor = max(finalColor, emissive);
     
+    //DEBUG
+    //half debugValue1 = GGXNormalDistribution(roughness, saturate(nDotH));
+    //half3 debugValue3 = debugValue1 * FresnelTerm(fragmentCommonData.specColor, nDotH);
+    //debugValue3 = max(0, dynamicLight2);
+    //
+    //if (Luminance(debugValue3) > 1) {
+    //  if (Luminance(debugValue3) > 2) {
+    //    if (Luminance(debugValue3) > 3) {
+    //      debugValue3 = half3(0,0,1);
+    //    } else {
+    //      debugValue3 = half3(0,1,0);
+    //    }
+    //  } else {
+    //    debugValue3 = half3(1,0,0);
+    //  }
+    //}
+    ////#if defined(UNITY_PASS_FORWARDBASE)
+    //////sharedSpecular += max(0,dynamicSpecular * saturate(nDotL));
+    //half4 debugValue = half4(debugValue3, 1);
+    //return max(0, half4(finalColor,1) * 0.001 - 1) + lightAttenuation.shadow;
+    //#else
     return half4(finalColor,1);
+    //#endif
 }

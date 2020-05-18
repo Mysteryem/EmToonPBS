@@ -1,4 +1,4 @@
-Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
+Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
     Properties {
         [Enum(Off,0,Front,1,Back,2)] _Culling ("Culling Mode", Int) = 2
         _Color ("Color", Color) = (1,1,1,1)
@@ -49,6 +49,9 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
         _HueMask ("Hue Mask", 2D) = "white" {}
         _HueShift ("Hue Shift", Range(0,1)) = 0
         [Enum(Off,0,On,1)] _FixedHueShift ("Fixed Hue Shift", Int) = 0
+        [HDR]_OutlineColor("Outline Color", Color) = (0,0,0,1)
+        _OutlineWidth("Outline Width", Range(0, 5)) = 0.1
+        _OutlineMask("Outline Mask", 2D) = "white" {}
     }
     SubShader {
         Tags {
@@ -62,12 +65,12 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
             }
           
             CGPROGRAM
-            //#define Geometry
+            #define Geometry
             
             #pragma target 3.0
             #pragma vertex vert
             #pragma fragment frag
-            //#pragma geometry geom
+            #pragma geometry geom
             
             // Testing/WIP
             //#pragma multi_compile _ VERTEXLIGHT_ON

@@ -12,33 +12,47 @@
 #define EM_SAMPLE_TEX2D_LOD_SAMPLER(tex,samplertex,coord,lod) tex2Dlod (tex,float4(coord,0.0,lod))
 #endif
 
+struct Attenuation {
+  fixed light, shadow;
+};
+
 #ifdef POINT
 #define EM_LIGHT_ATTENUATION(destNameS, input, worldPos) \
     unityShadowCoord3 lightCoordS = mul(unity_WorldToLight, unityShadowCoord4(worldPos, 1)).xyz; \
-    fixed destNameS = tex2D(_LightTexture0, dot(lightCoordS, lightCoordS).rr).UNITY_ATTEN_CHANNEL;
+    Attenuation destNameS; \
+    destNameS.light = tex2D(_LightTexture0, dot(lightCoordS, lightCoordS).rr).UNITY_ATTEN_CHANNEL; \
+    destNameS.shadow = UNITY_SHADOW_ATTENUATION(input, worldPos);
 #endif
 
 #ifdef SPOT
 #define EM_LIGHT_ATTENUATION(destNameS, input, worldPos) \
     unityShadowCoord4 lightCoordS = mul(unity_WorldToLight, unityShadowCoord4(worldPos, 1)); \
-    fixed destNameS = (lightCoordS.z > 0) * UnitySpotCookie(lightCoordS) * UnitySpotAttenuate(lightCoordS.xyz);
+    Attenuation destNameS; \
+    destNameS.light = (lightCoordS.z > 0) * UnitySpotCookie(lightCoordS) * UnitySpotAttenuate(lightCoordS.xyz); \
+    destNameS.shadow = UNITY_SHADOW_ATTENUATION(input, worldPos);
 #endif
 
 #ifdef DIRECTIONAL
-    //#define EM_LIGHT_ATTENUATION(destNameS, input, worldPos) fixed destNameS = UNITY_SHADOW_ATTENUATION(input, worldPos);
-    #define EM_LIGHT_ATTENUATION(destNameS, input, worldPos) fixed destNameS = 1;
+#define EM_LIGHT_ATTENUATION(destNameS, input, worldPos) \
+    Attenuation destNameS; \
+    destNameS.light = 1; \
+    destNameS.shadow = UNITY_SHADOW_ATTENUATION(input, worldPos);
 #endif
 
 #ifdef POINT_COOKIE
 #define EM_LIGHT_ATTENUATION(destNameS, input, worldPos) \
     unityShadowCoord3 lightCoordS = mul(unity_WorldToLight, unityShadowCoord4(worldPos, 1)).xyz; \
-    fixed destNameS = tex2D(_LightTextureB0, dot(lightCoordS, lightCoordS).rr).UNITY_ATTEN_CHANNEL * texCUBE(_LightTexture0, lightCoordS).w;
+    Attenuation destNameS; \
+    destNameS.light = tex2D(_LightTextureB0, dot(lightCoordS, lightCoordS).rr).UNITY_ATTEN_CHANNEL * texCUBE(_LightTexture0, lightCoordS).w; \
+    destNameS.shadow = UNITY_SHADOW_ATTENUATION(input, worldPos);
 #endif
 
 #ifdef DIRECTIONAL_COOKIE
 #define EM_LIGHT_ATTENUATION(destNameS, input, worldPos) \
     unityShadowCoord2 lightCoordS = mul(unity_WorldToLight, unityShadowCoord4(worldPos, 1)).xy; \
-    fixed destNameS = tex2D(_LightTexture0, lightCoordS).w;
+    Attenuation destNameS; \
+    destNameS.light = tex2D(_LightTexture0, lightCoordS).w; \
+    destNameS.shadow = UNITY_SHADOW_ATTENUATION(input, worldPos);
 #endif
 
 // From Xiexe's Unity Shaders
@@ -89,9 +103,10 @@ half3 calcLightDir(float3 worldPos)
 
 half3 calcLightDirSH(float3 worldPos) {
   half3 lightDir = unity_SHAr.xyz + unity_SHAg.xyz + unity_SHAb.xyz;
+  
   if(length(unity_SHAr.xyz*unity_SHAr.w + unity_SHAg.xyz*unity_SHAg.w + unity_SHAb.xyz*unity_SHAb.w) == 0
-     && length(lightDir) < 0.1) {
-    return half4(0, -1, 0, 1);
+     || length(lightDir) < 0.01) {
+    return half3(0, 0, 0);
   }
   return normalize(lightDir);
 }
