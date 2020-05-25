@@ -23,10 +23,12 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
         [Enum(Metallic Alpha,0,Albedo Alpha,1)] _SmoothnessTextureChannel ("(NYI)Smoothness texture channel", Float) = 0
         
         _SaturationAdjustment ("Saturation Adjustment", Range(-1, 2)) = 0
-        _DiffuseSoftness ("Diffuse Smoothness", Range(0, 1)) = 0
-        _LightOrView ("Diffuse Light(0)/View(1) Direction Blend", Range(0, 1)) = 0.5
-        _DiffuseViewPull ("View Direction Pull", Range(0, 1.5)) = 0.4
-        _ViewDirectionDiffuseBoost ("Velvet Boost", Range(0,10)) = 0
+        
+        _DiffuseControlMap("Diffuse Control", 2D) = "white" {}
+        _DiffuseSoftness ("Diffuse Smoothness (R)", Range(0, 1)) = 0
+        _LightOrView ("Diffuse Light(0)/View(1) Direction Blend (G)", Range(0, 1)) = 0.5
+        _DiffuseViewPull ("View Direction Pull (B)", Range(0, 1)) = 0.27
+        _ViewDirectionDiffuseBoost ("Velvet Boost (A)", Range(0,1)) = 0
         _DynamicShadowSharpness ("Dynamic Shadow Sharpness", Range(0, 1)) = 1
         _DynamicShadowLift ("Dynamic Shadow Lift", Range(0, 1)) = 0.3
         [HDR]_SpecularColour ("Specular Colour", Color) = (1,1,1,1)
@@ -39,11 +41,20 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
         _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Map Strength", Float ) = 1
         
-        _OcclusionMap("Occlusion Strength", 2D) = "white" {}
+        _OcclusionMap("Occlusion Strength (G)", 2D) = "white" {}
         _OcclusionStrength("Strength", Range(0.0, 1.0)) = 1.0
         
+        _DetailMask("Detail Mask", 2D) = "white" {}
+        
+        _DetailAlbedoMap("Detail Albedo x2", 2D) = "grey" {}
+        _DetailNormalMapScale("Scale", Float) = 1.0
+        _DetailNormalMap("Normal Map", 2D) = "bump" {}
+        
+        [Enum(UV0,0,UV1,1)] _UVSec ("UV Set for secondary textures", Float) = 0
+        
         _EmissionMap ("Emission Map", 2D) = "white" {}
-        [HDR]_Emission ("Emission", Color) = (0,0,0,1)
+        [HDR]_Emission ("DEPRECIATED Emission", Color) = (0,0,0,1)
+        [HDR]_EmissionColor ("Emission", Color) = (0,0,0,1)
         _ReflectionCubemap ("Reflection Cubemap (fallback)", Cube) = "_Skybox" {}
         [Enum(Off,0,On,1)] _Usecubemapinsteadofreflectionprobes ("Use fallback instead of probes", Int) = 0
         _HueMask ("Hue Mask", 2D) = "white" {}
@@ -55,7 +66,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
     }
     SubShader {
         Tags {
-            "RenderType"="Opaque" "Queue"="Geometry"
+            "RenderType"="Opaque" "Queue"="Geometry" "PerformanceChecks"="False"
         }
         Cull [_Culling]
         PASS {
@@ -180,4 +191,5 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
         }
     }
     Fallback "Diffuse"
+    CustomEditor "EmToon6PBSShaderGUI"
 }

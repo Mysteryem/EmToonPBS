@@ -23,10 +23,12 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
         [Enum(Metallic Alpha,0,Albedo Alpha,1)] _SmoothnessTextureChannel ("(NYI)Smoothness texture channel", Float) = 0
         
         _SaturationAdjustment ("Saturation Adjustment", Range(-1, 2)) = 0
-        _DiffuseSoftness ("Diffuse Smoothness", Range(0, 1)) = 0
-        _LightOrView ("Diffuse Light(0)/View(1) Direction Blend", Range(0, 1)) = 0.5
-        _DiffuseViewPull ("View Direction Pull", Range(0, 1.5)) = 0.4
-        _ViewDirectionDiffuseBoost ("Velvet Boost", Range(0,10)) = 0
+        
+        _DiffuseControlMap("Diffuse Control", 2D) = "white" {}
+        _DiffuseSoftness ("Diffuse Smoothness (R)", Range(0, 1)) = 0
+        _LightOrView ("Diffuse Light(0)/View(1) Direction Blend (G)", Range(0, 1)) = 0.5
+        _DiffuseViewPull ("View Direction Pull (B)", Range(0, 1)) = 0.27
+        _ViewDirectionDiffuseBoost ("Velvet Boost (A)", Range(0,1)) = 0
         _DynamicShadowSharpness ("Dynamic Shadow Sharpness", Range(0, 1)) = 1
         _DynamicShadowLift ("Dynamic Shadow Lift", Range(0, 1)) = 0.3
         [HDR]_SpecularColour ("Specular Colour", Color) = (1,1,1,1)

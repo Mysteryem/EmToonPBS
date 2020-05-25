@@ -2,6 +2,9 @@
 // TODO: Detail normals, detail albedo, choosable UV set (may need to change vert function, aren't we out of passable interpolator variables?)
 #include "EmShaderFunctionsToon5.cginc"
 
+// TODO: Replace with conditional definition from UI having a normal map or not
+#define _NORMALMAP
+
 uniform fixed4 _Color;
 uniform UNITY_DECLARE_TEX2D(_MainTex);
 uniform float4 _MainTex_ST;
@@ -13,8 +16,11 @@ uniform fixed _SaturationAdjustment;
 
 uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_EmissionMap);
 uniform float4 _EmissionMap_ST;
-uniform fixed4 _Emission;
+//TODO: Rename to _EmissionColor
+uniform fixed4 _EmissionColor;
 
+uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_DiffuseControlMap);
+uniform float4 _DiffuseControlMap_ST;
 uniform half _DiffuseViewPull;
 uniform fixed _DiffuseSoftness;
 uniform fixed _LightOrView;
@@ -73,6 +79,7 @@ uniform float4 _OutlineMask_ST;
 struct VertexData {
     float4 vertex : POSITION;
     float2 texcoord0 : TEXCOORD0;
+    float2 texcoord1 : TEXCOORD1;
     float3 normal : NORMAL;
     float4 tangent : TANGENT;
     float4 color : COLOR;
@@ -85,7 +92,7 @@ struct VertexOutput {
 #else
     float4 pos : SV_POSITION;
 #endif
-    float2 uv0 : TEXCOORD0;
+    float4 tex : TEXCOORD0;
     float3 normalDir : TEXCOORD1;
     float3 tangentDir : TEXCOORD2;
     float3 bitangentDir : TEXCOORD3;
@@ -107,25 +114,26 @@ struct VertexOutput {
         float4 pos : CLIP_POS;
         float4 vertex : SV_POSITION;
         float2 uv0 : TEXCOORD0;
-        float3 normalDir : TEXCOORD1;
-        float3 tangentDir : TEXCOORD2;
-        float3 bitangentDir : TEXCOORD3;
-        float4 posWorld : TEXCOORD4;
-        float4 color : TEXCOORD5;
-        float3 normal : TEXCOORD7;
-        float4 screenPos : TEXCOORD8;
-        float3 objPos : TEXCOORD10;
-        float3 vCameraPosX : TEXCOORD11;
-        float3 vCameraPosY : TEXCOORD12;
-        float3 vCameraPosZ : TEXCOORD13;
-        SHADOW_COORDS(6)
-        UNITY_FOG_COORDS(9)
+        float2 uv1 : TEXCOORD1;
+        float3 normalDir : TEXCOORD2;
+        float3 tangentDir : TEXCOORD3;
+        float3 bitangentDir : TEXCOORD4;
+        float4 posWorld : TEXCOORD5;
+        float4 color : TEXCOORD6;
+        float3 normal : TEXCOORD8;
+        float4 screenPos : TEXCOORD9;
+        float3 objPos : TEXCOORD11;
+        float3 vCameraPosX : TEXCOORD12;
+        float3 vCameraPosY : TEXCOORD13;
+        float3 vCameraPosZ : TEXCOORD14;
+        SHADOW_COORDS(7)
+        UNITY_FOG_COORDS(10)
     };
 
     struct g2f
     {
         float4 pos : SV_POSITION;
-        float2 uv0 : TEXCOORD0;
+        float4 tex : TEXCOORD0;
         float3 normalDir : TEXCOORD1;
         float3 tangentDir : TEXCOORD2;
         float3 bitangentDir : TEXCOORD3;
@@ -153,7 +161,9 @@ VertexOutput vert (VertexData v) {
     o.normalDir = UnityObjectToWorldNormal(v.normal);
     o.tangentDir = UnityObjectToWorldDir(v.tangent.xyz);
     o.bitangentDir = normalize(cross(o.normalDir, o.tangentDir) * tangentSign);
-    o.uv0 = v.texcoord0;
+    o.tex = float4(v.texcoord0, v.texcoord1);
+    //o.tex.uv = v.texcoord0;
+    //o.tex.zw = v.texcoord1;
     o.screenPos = ComputeScreenPos(o.pos);
     o.objPos = normalize(v.vertex);
     o.normal = v.normal;
@@ -202,7 +212,9 @@ VertexOutput vert (VertexData v) {
             o.normalDir = IN[i].normalDir;
             o.tangentDir = IN[i].tangentDir;
             o.bitangentDir = IN[i].bitangentDir;
-            o.uv0 = IN[i].uv0;
+            o.tex = float4(IN[i].uv0, IN[i].uv1);
+            //o.tex.uv = IN[i].uv0;
+            //o.tex.zw = IN[i].uv1;
             o.color = float4(_OutlineColor.rgb, 1); // store if outline in alpha channel of vertex colors | 1 = is an outline
             o.screenPos = ComputeScreenPos(o.pos);
             o.objPos = normalize(outlinePos);
@@ -226,7 +238,9 @@ VertexOutput vert (VertexData v) {
             o.normalDir = IN[j].normalDir;
             o.tangentDir = IN[j].tangentDir;
             o.bitangentDir = IN[j].bitangentDir;
-            o.uv0 = IN[j].uv0;
+            o.tex = float4(IN[j].uv0, IN[j].uv1);
+            //o.tex.uv = IN[j].uv0;
+            //o.tex.zw = IN[j].uv1;
             o.color = float4(IN[j].color.rgb,0); // store if outline in alpha channel of vertex colors | 0 = not an outline
             o.screenPos = ComputeScreenPos(o.pos);
             o.objPos = normalize(IN[j].vertex);
@@ -252,6 +266,9 @@ half4 frag(
             VertexOutput i
 #endif
             , uint facing : SV_IsFrontFace) : SV_Target {
+    float2 mainUV = i.tex.xy;
+    float2 detailUV = i.tex.zw;
+    
     // ----- Normals -- Unpack Normal map and calculate perturbed normals and smoothed (scaled) perturbed normals
     i.normalDir = normalize(i.normalDir);
     bool isFrontFace = facing > 0;
@@ -271,29 +288,50 @@ half4 frag(
     
     half3 lightColor = _LightColor0.rgb;
     
-    half4 sampledOcclusion = UNITY_SAMPLE_TEX2D_SAMPLER(_OcclusionMap, _MainTex, TRANSFORM_TEX(i.uv0, _OcclusionMap));
-    half occlusion = grayscale(LerpOneTo(sampledOcclusion.rgb, _OcclusionStrength));
-    half UNUSED_g = sampledOcclusion.g;
+    half4 sampledOcclusion = UNITY_SAMPLE_TEX2D_SAMPLER(_OcclusionMap, _MainTex, TRANSFORM_TEX(mainUV, _OcclusionMap));
+    half UNUSED_r = sampledOcclusion.r;
+    half occlusion = LerpOneTo(sampledOcclusion.g, _OcclusionStrength);
     half UNUSED_b = sampledOcclusion.b;
     half UNUSED_a = sampledOcclusion.a;
+    
+    fixed4 sampledDiffuseControl = UNITY_SAMPLE_TEX2D_SAMPLER(_DiffuseControlMap, _MainTex, TRANSFORM_TEX(mainUV, _DiffuseControlMap));
+    
+    _DiffuseSoftness *= sampledDiffuseControl.r;
+    _LightOrView *= sampledDiffuseControl.g;
+    // [0,1] -> [0,1.5], there's no point to go higher than 1.5, all of the visible normals end up facing the view
+    _DiffuseViewPull *= 1.5 * sampledDiffuseControl.b;
+    // [0,1] -> [0,10], maybe could allow higher than 10, especially for darker surfaces? Or maybe it would be better if the diffuse colour didn't affect this boost so much?
+    _ViewDirectionDiffuseBoost *= 10 * sampledDiffuseControl.a;
     
     // r = metallic
     // g = smoothnessY
     // b = anisotropy
     // a = smoothness
-    half4 metallicGlossMap = UNITY_SAMPLE_TEX2D_SAMPLER(_MetallicGlossMap, _MainTex, TRANSFORM_TEX(i.uv0, _MetallicGlossMap));
+    half4 metallicGlossMap = UNITY_SAMPLE_TEX2D_SAMPLER(_MetallicGlossMap, _MainTex, TRANSFORM_TEX(mainUV, _MetallicGlossMap));
     _Metallic *= metallicGlossMap.r;
     _Glossiness *= metallicGlossMap.a;
     _SmoothnessY *= metallicGlossMap.g;
     _Anisotropy *= metallicGlossMap.b;
     
+#ifdef _NORMALMAP
     half3x3 tangentTransform = half3x3( i.tangentDir, i.bitangentDir, i.normalDir);
-    fixed3 _BumpMap_var = UnpackNormal(UNITY_SAMPLE_TEX2D_SAMPLER(_BumpMap, _MainTex, TRANSFORM_TEX(i.uv0, _BumpMap)));
+    fixed3 _BumpMap_var = UnpackNormal(UNITY_SAMPLE_TEX2D_SAMPLER(_BumpMap, _MainTex, TRANSFORM_TEX(mainUV, _BumpMap)));
     half3 normalLocal = half3((_BumpScale * _BumpMap_var.rg), _BumpMap_var.b);
     half3 normalDirection = normalize(mul( normalLocal, tangentTransform )); // Perturbed normals
     half3 doubleSidedNormals = normalDirection;
     half3 doubleSidedTangent = cross(i.bitangentDir, doubleSidedNormals);
     half3 doubleSidedBitangent = cross(doubleSidedNormals, doubleSidedTangent);
+  #if _DETAIL && defined(UNITY_ENABLE_DETAIL_NORMALMAP)
+    // Do some extra stuff with detail normals, see UnityStandardInput.cginc NormalInTangentSpace(float4)
+    #if _DETAIL_LERP
+    #else
+    #endif
+  #endif
+#else
+    half3 doubleSidedNormals = normalDirection;
+    half3 doubleSidedTangent = cross(i.bitangentDir, doubleSidedNormals);
+    half3 doubleSidedBitangent = cross(doubleSidedNormals, doubleSidedTangent);
+#endif
     
     
     // ------- View and reflection directions
@@ -381,18 +419,34 @@ half4 frag(
 //#if defined(POINT) || defined(SPOT) || defined(DIRECTIONAL) || defined(POINT_COOKIE) || defined(DIRECTIONAL_COOKIE)
     EM_LIGHT_ATTENUATION(lightAttenuation, i, i.posWorld.xyz);
     // TODO: What difference does it make doing the rounding here?
-    //lightAttenuation.shadow = lerp(lightAttenuation.shadow, round(lightAttenuation.shadow), _DynamicShadowSharpness); 
-    fixed attenuation = lightAttenuation.light * lightAttenuation.shadow;
+    
+    // Get shadows and control their sharpness (XSToon style) and strength
+    fixed oneMinusShadow = 1 - lightAttenuation.shadow;
+    fixed shadowStrength = 1 - _LightShadowData.r;
+//#if defined(SPOT)
+//    // SPOT shadows are already super sharp
+//    fixed sharpenedShadows = oneMinusShadow;
+//#else
+    // Need to catch the division by zero, an alternative would be to saturate(oneMinusShadow / shadowStrength) or maybe min(1, oneMinusShadow / shadowStrength)
+    fixed fullStrengthShadows = shadowStrength == 0 ? 1 : oneMinusShadow / shadowStrength; //[0,shadowStrength] -> [0,1]
+    // More expensive, but typically nicer results when transitioning between 0 and 1, but can have artifacts at full sharpness with soft shadows, particularly at a distance.
+    //fixed sharpenedShadows = SpecialRemap(1 - _DynamicShadowSharpness, 1, fullStrengthShadows);
+    // XSToon style shadow sharpening
+    fixed sharpenedShadows = lerp(fullStrengthShadows, round(fullStrengthShadows), _DynamicShadowSharpness);
+//#endif
+    // Multiplying by shadowStrength takes us back to [0,shadowStrength]
+    fixed modifiedShadows = sharpenedShadows * shadowStrength;
+    //fixed attenuationNoShadowLift = lightAttenuation.light * modifiedShadows;
+    // Some worlds are only lit by a directional dynamic light with full strength shadows which looks horrible, shadow lift can aleviate this
+    modifiedShadows *= (1 - _DynamicShadowLift);
+    modifiedShadows = 1 - modifiedShadows;
+    //newShadows *= (1 - _DynamicShadowLift);
+    fixed attenuation = lightAttenuation.light * modifiedShadows;
     fixed attenuationNoShadows = lightAttenuation.light;
     fixed shadows = lightAttenuation.light * (1 - lightAttenuation.shadow);
     
     dynamicLightAverageComponent = attenuationNoShadows * _LightColor0.rgb; 
     
-    // Get shadows and control their strength/sharpness(xiexe style)
-    shadows = lerp(shadows, round(shadows), _DynamicShadowSharpness);
-    half3 attenuationNoShadowLift = attenuationNoShadows - shadows;
-    shadows *= (1 - _DynamicShadowLift);
-    attenuation = attenuationNoShadows - shadows;
     
     half dynamicSideMul = 0.2;
     half3 dynamicSideMul3 = half3(0.2,0.2,0.2);
@@ -468,14 +522,14 @@ half4 frag(
     float node_3045_d = 0;
     fixed3 node_3045 = 0;
     float3 node_1294 = 0;
-    fixed hueMask = UNITY_SAMPLE_TEX2D_SAMPLER(_HueMask, _MainTex, TRANSFORM_TEX(i.uv0, _HueMask)).r;
+    fixed hueMask = UNITY_SAMPLE_TEX2D_SAMPLER(_HueMask, _MainTex, TRANSFORM_TEX(mainUV, _HueMask)).r;
 #endif 
     
     // ------- Emission
     half3 emissive = 0;
 #if defined(UNITY_PASS_FORWARDBASE)
-    fixed4 sampledEmissionTexture = UNITY_SAMPLE_TEX2D_SAMPLER(_EmissionMap,_MainTex, TRANSFORM_TEX(i.uv0, _EmissionMap));
-    emissive = (sampledEmissionTexture * _Emission.rgb);
+    fixed4 sampledEmissionTexture = UNITY_SAMPLE_TEX2D_SAMPLER(_EmissionMap,_MainTex, TRANSFORM_TEX(mainUV, _EmissionMap));
+    emissive = (sampledEmissionTexture.rgb * _EmissionColor.rgb);
     
 #if defined(HMD_HUE)    
     node_3045_p = lerp(float4(float4(emissive,0.0).zy, node_3045_k.wz), float4(float4(emissive,0.0).yz, node_3045_k.xy), step(float4(emissive,0.0).z, float4(emissive,0.0).y));
@@ -493,8 +547,8 @@ half4 frag(
     
     // Allow using a second texture that is used as light decreases?
     //half lowLightTexturePick = saturate(1-pow(max(0,grayscale(finalDiffuseLight)*2-1), 1));
-    //fixed4 sampledMainTexture = lerp(UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(i.uv0, _MainTex)), UNITY_SAMPLE_TEX2D_SAMPLER(_LowLightTex,_MainTex, TRANSFORM_TEX(i.uv0, _LowLightTex)), lowLightTexturePick);
-    fixed4 sampledMainTexture = UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(i.uv0, _MainTex)) * _Color * half4(i.color.rgb, 1);
+    //fixed4 sampledMainTexture = lerp(UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)), UNITY_SAMPLE_TEX2D_SAMPLER(_LowLightTex,_MainTex, TRANSFORM_TEX(mainUV, _LowLightTex)), lowLightTexturePick);
+    fixed4 sampledMainTexture = UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)) * _Color * half4(i.color.rgb, 1);
     
 #if defined(HMD_HUE)
     fixed3 diffuseAndColour = sampledMainTexture.rgb;
@@ -582,7 +636,7 @@ half4 frag(
     half roughnessX = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughnessX);
     half roughnessY = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughnessY);
     half roughness = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughness);
-    fixed4 sampledSpecularColourMap = tex2D(_SpecularMap, TRANSFORM_TEX(i.uv0, _SpecularMap));
+    fixed4 sampledSpecularColourMap = tex2D(_SpecularMap, TRANSFORM_TEX(mainUV, _SpecularMap));
     // We want a really quick blend from normal style to toon style and to then use the rest of the slider/map value to control how smooth the edges of the toon specular are
     // We have to be careful not to blend into toon specular right at 0 as the immediate blend between ~95% normal an ~5% toon is horrible, any values near to zero should result in normal specular to account for mipmapping
     fixed isToonSpecular = sampledSpecularColourMap.a * _ToonSpecular;
@@ -841,7 +895,9 @@ half4 frag(
     ////#if defined(UNITY_PASS_FORWARDBASE)
     //////sharedSpecular += max(0,dynamicSpecular * saturate(nDotL));
     //half4 debugValue = half4(debugValue3, 1);
-    //return max(0, half4(finalColor,1) * 0.001 - 1) + lightAttenuation.shadow;
+    //return max(0, half4(finalColor,1) * 0.001 - 1) + 1 - lightAttenuation.shadow;
+    //return max(0, half4(finalColor,1) * 0.001 - 1) + newShadows;
+    //return max(0, half4(finalColor,1) * 0.001 - 1) + newShadows;
     //#else
     return half4(finalColor,1);
     //#endif
