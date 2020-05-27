@@ -4,7 +4,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
         _Color ("Color", Color) = (1,1,1,1)
         _MainTex ("Main texture (RGB albedo)", 2D) = "white" {}
         
-        //_Cutoff("Alpha Cutoff", Range(0.0, 1.0)) = 0.5
+        _Cutoff("Alpha Cutoff", Range(0.0, 1.0)) = 0.5
         
         _MetallicGlossMap("Metallic/Smoothness (X)/Smoothness Y/Anisotropy map", 2D) = "white" {}
         
@@ -41,16 +41,35 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
         _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Map Strength", Float ) = 1
         
-        _OcclusionMap("Occlusion Strength", 2D) = "white" {}
+        _OcclusionMap("Occlusion Strength (G)", 2D) = "white" {}
         _OcclusionStrength("Strength", Range(0.0, 1.0)) = 1.0
         
+        _DetailMask("Detail Mask", 2D) = "white" {}
+        
+        _DetailAlbedoMap("Detail Albedo x2", 2D) = "grey" {}
+        _DetailNormalMapScale("Scale", Float) = 1.0
+        _DetailNormalMap("Normal Map", 2D) = "bump" {}
+        
+        [Enum(UV0,0,UV1,1)] _UVSec ("UV Set for secondary textures", Float) = 0
+        
         _EmissionMap ("Emission Map", 2D) = "white" {}
-        [HDR]_Emission ("Emission", Color) = (0,0,0,1)
+        [HDR]_Emission ("DEPRECIATED Emission", Color) = (0,0,0,1)
+        [HDR]_EmissionColor ("Emission", Color) = (0,0,0,1)
         _ReflectionCubemap ("Reflection Cubemap (fallback)", Cube) = "_Skybox" {}
         [Enum(Off,0,On,1)] _Usecubemapinsteadofreflectionprobes ("Use fallback instead of probes", Int) = 0
         _HueMask ("Hue Mask", 2D) = "white" {}
         _HueShift ("Hue Shift", Range(0,1)) = 0
         [Enum(Off,0,On,1)] _FixedHueShift ("Fixed Hue Shift", Int) = 0
+        
+        // Forward rendering options
+        [ToggleOff] _SpecularHighlights("Specular Highlights", Float) = 1.0
+        [ToggleOff] _GlossyReflections("Glossy Reflections", Float) = 1.0
+        
+        // Blending state
+        [HideInInspector] _Mode ("__mode", Float) = 0.0
+        [HideInInspector] _SrcBlend ("__src", Float) = 1.0
+        [HideInInspector] _DstBlend ("__dst", Float) = 0.0
+        [HideInInspector] _ZWrite ("__zw", Float) = 1.0
     }
     SubShader {
         Tags {
@@ -62,11 +81,20 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
             Tags {
                 "LightMode"="ForwardBase"
             }
+            Blend [_SrcBlend] [_DstBlend]
+            ZWrite [_ZWrite]
           
             CGPROGRAM
             //#define Geometry
             
             #pragma target 3.0
+            
+            #pragma shader_feature _NORMALMAP
+            #pragma shader_feature _ _ALPHATEST_ON _ALPHABLEND_ON _ALPHAPREMULTIPLY_ON
+            #pragma shader_feature ___ _DETAIL_MULX2
+            #pragma shader_feature _ _SPECULARHIGHLIGHTS_OFF
+            #pragma shader_feature _ _GLOSSYREFLECTIONS_OFF
+            
             #pragma vertex vert
             #pragma fragment frag
             //#pragma geometry geom
@@ -105,11 +133,19 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
             Tags {
                 "LightMode"="ForwardAdd"
             }
-            // Correct
-            Blend One One
+            Blend [_SrcBlend] One
+            Fog { Color (0,0,0,0) } // in additive pass fog should be black
+            ZWrite Off
+            ZTest LEqual
             
             CGPROGRAM
             //#define Geometry
+            #pragma target 3.0
+            
+            #pragma shader_feature _NORMALMAP
+            #pragma shader_feature _ _ALPHATEST_ON _ALPHABLEND_ON _ALPHAPREMULTIPLY_ON
+            #pragma shader_feature ___ _DETAIL_MULX2
+            #pragma shader_feature _ _SPECULARHIGHLIGHTS_OFF
             
             #pragma vertex vert
             #pragma fragment frag
@@ -179,4 +215,5 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
         }
     }
     Fallback "Diffuse"
+    CustomEditor "EmToon6PBSShaderGUI"
 }

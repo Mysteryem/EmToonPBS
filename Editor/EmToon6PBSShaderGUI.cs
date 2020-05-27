@@ -4,22 +4,13 @@ using UnityEngine;
 
 public class EmToon6PBSShaderGUI : ShaderGUI
 {
-  // What kind of shader are we?
-  public enum ShaderType
-  {
-    Opaque,
-    // Add alpha cutoff control
-    Cutout,
-    // Add BlendMode control
-    Transparent
-  }
   
-  // Only used in transparent shader
-  // As we change render queue in the material, there's no point including Opaque and Cutout blend modes as they will be separate shaders
   public enum BlendMode
   {
-    Fade,
-    Transparent
+      Opaque,
+      Cutout,
+      Fade,   // Old school alpha-blending mode, fresnel does not affect amount of transparency
+      Transparent // Physically plausible transparency mode, implemented as alpha pre-multiply
   }
   
   public enum SmoothnessMapChannel
@@ -33,6 +24,7 @@ public class EmToon6PBSShaderGUI : ShaderGUI
     public static GUIContent uvSetLabel = new GUIContent("UV Set");
     
     public static GUIContent albedoText = new GUIContent("Albedo", "Albedo (RGB) and Transparency (A)");
+    public static GUIContent alphaCutoffText = new GUIContent("Alpha Cutoff", "Threshold for alpha cutoff");
     public static GUIContent metallicMapText = new GUIContent("Metallic", "Metallic (R), Smoothness/Smoothness X (A), Smoothness Y (G), Anisotropy (B)");
     public static GUIContent smoothnessText = new GUIContent("Smoothness", "Smoothness/Smoothness X value");
     
@@ -56,8 +48,6 @@ public class EmToon6PBSShaderGUI : ShaderGUI
     public static string forwardText = "Forward Rendering Options";
     public static string renderingMode = "Rendering Mode";
     public static string advancedText = "Advanced Options";
-    
-    // Transparent shader only
     public static readonly string[] blendNames = Enum.GetNames(typeof(BlendMode));
     
     // Custom Styles
@@ -168,10 +158,8 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   private const float kMaxfp16 = 65536f; // Clamp to a value that fits into fp16.
   ColorPickerHDRConfig m_ColorPickerHDRConfig = new ColorPickerHDRConfig(0f, kMaxfp16, 1 / kMaxfp16, 3f);
   
-  //TODO: Only get blend mode if we're a transparent shader
-  //TODO: Only get alphaCutoff if we're a Cutout shader
   //TODO: Only get hue options if we're a hue shader? TODO TODO: Can we activate hue effects with a shader feature?
-  //TODO: Only get outline options if we're an outline shader? TODO TODO: Can we activate outline effects with a shader feature?
+  //TODO: Only get outline options if we're an outline shader? TODO TODO: Can we activate outline effects with a shader feature? ANSWER: No
   public void FindProperties(MaterialProperty[] props)
   {
       // Custom - Top properties
@@ -196,9 +184,9 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   }
   
   // Custom - Outlines
-  outlineWidth = FindProperty("_OutlineWidth", props);
+  outlineWidth = FindProperty("_OutlineWidth", props, false);
   // TODO: Add a [MaterialToggle] with Shader Feature for outlines, but how do we optionally use the "#pragma geometry geom", can we use an "#ifdef Geometry" before it?
-  m_OutlineEnable = outlineWidth.floatValue != 0;
+  m_OutlineEnable = outlineWidth != null;
   if (m_OutlineEnable) {
       outlineColor = FindProperty("_OutlineColor", props);
       outlineMask = FindProperty("_OutlineMask", props);
@@ -221,10 +209,10 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   directionalSHSpecular = FindProperty("_ShDirectionalSpecularOn", props);
   reflectionSHSpecular = FindProperty("_ShReflectionSpecularOn", props);
     
-    //blendMode = FindProperty("_Mode", props);
+    blendMode = FindProperty("_Mode", props);
     albedoMap = FindProperty("_MainTex", props);
     albedoColor = FindProperty("_Color", props);
-    //alphaCutoff = FindProperty("_Cutoff", props);
+    alphaCutoff = FindProperty("_Cutoff", props);
     specularMap = FindProperty("_SpecGlossMap", props, false);
     specularColor = FindProperty("_SpecColor", props, false);
     metallicMap = FindProperty("_MetallicGlossMap", props, false);
@@ -341,9 +329,9 @@ public class EmToon6PBSShaderGUI : ShaderGUI
       }
       if (EditorGUI.EndChangeCheck())
       {
-          // TODO: Enable somehow for transparent
-          //foreach (var obj in blendMode.targets)
-          //    MaterialChanged((Material)obj/*, m_WorkflowMode*/);
+          Debug.Log("Change check true");
+          foreach (var obj in blendMode.targets)
+              MaterialChanged((Material)obj/*, m_WorkflowMode*/);
       }
 
       EditorGUILayout.Space();
@@ -369,31 +357,51 @@ public class EmToon6PBSShaderGUI : ShaderGUI
       }
 
       base.AssignNewShaderToMaterial(material, oldShader, newShader);
+      
+      if (oldShader == null || !oldShader.name.Contains("Legacy Shaders/"))
+      {
+          SetupMaterialWithBlendMode(material, (BlendMode)material.GetFloat("_Mode"));
+          return;
+      }
 
+      BlendMode blendMode = BlendMode.Opaque;
+      if (oldShader.name.Contains("/Transparent/Cutout/"))
+      {
+          blendMode = BlendMode.Cutout;
+      }
+      else if (oldShader.name.Contains("/Transparent/"))
+      {
+          // NOTE: legacy shaders did not provide physically based transparency
+          // therefore Fade mode
+          blendMode = BlendMode.Fade;
+      }
+      material.SetFloat("_Mode", (float)blendMode);
       
       MaterialChanged(material/*, m_WorkflowMode*/);
   }
   
   void BlendModePopup()
   {
-      // TODO Enable for Transparent shader somehow
-      //EditorGUI.showMixedValue = blendMode.hasMixedValue;
-      //var mode = (BlendMode)blendMode.floatValue;
-      //
-      //EditorGUI.BeginChangeCheck();
-      //mode = (BlendMode)EditorGUILayout.Popup(Styles.renderingMode, (int)mode, Styles.blendNames);
-      //if (EditorGUI.EndChangeCheck())
-      //{
-      //    m_MaterialEditor.RegisterPropertyChangeUndo("Rendering Mode");
-      //    blendMode.floatValue = (float)mode;
-      //}
-      //
-      //EditorGUI.showMixedValue = false;
+      EditorGUI.showMixedValue = blendMode.hasMixedValue;
+      var mode = (BlendMode)blendMode.floatValue;
+      
+      EditorGUI.BeginChangeCheck();
+      mode = (BlendMode)EditorGUILayout.Popup(Styles.renderingMode, (int)mode, Styles.blendNames);
+      if (EditorGUI.EndChangeCheck())
+      {
+          m_MaterialEditor.RegisterPropertyChangeUndo("Rendering Mode");
+          blendMode.floatValue = (float)mode;
+      }
+      
+      EditorGUI.showMixedValue = false;
   }
   
   void DoNormalArea()
   {
-      m_MaterialEditor.TexturePropertySingleLine(Styles.normalMapText, bumpMap, bumpMap.textureValue != null ? bumpScale : null);
+      bool hasBumpMap = bumpMap.textureValue != null;
+      m_MaterialEditor.TexturePropertySingleLine(Styles.normalMapText, bumpMap, hasBumpMap ? bumpScale : null);
+      if (hasBumpMap)
+        m_MaterialEditor.TextureScaleOffsetProperty(bumpMap);
       if (bumpScale.floatValue != 1
           && UnityEditorInternal.InternalEditorUtility.IsMobilePlatform(EditorUserBuildSettings.activeBuildTarget))
           if (m_MaterialEditor.HelpBoxWithButton(
@@ -409,12 +417,12 @@ public class EmToon6PBSShaderGUI : ShaderGUI
       m_MaterialEditor.TexturePropertySingleLine(Styles.albedoText, albedoMap, albedoColor);
       if (albedoMap.textureValue != null)
           m_MaterialEditor.TextureScaleOffsetProperty(albedoMap);
+      if (((BlendMode)material.GetFloat("_Mode") == BlendMode.Cutout))
+      {
+          m_MaterialEditor.ShaderProperty(alphaCutoff, Styles.alphaCutoffText.text, MaterialEditor.kMiniTextureFieldLabelIndentLevel + 1);
+      }
       // Custom setting
       m_MaterialEditor.ShaderProperty(saturationAdjust, Styles.saturationAdjustText);
-      //if (((BlendMode)material.GetFloat("_Mode") == BlendMode.Cutout))
-      //{
-      //    m_MaterialEditor.ShaderProperty(alphaCutoff, Styles.alphaCutoffText.text, MaterialEditor.kMiniTextureFieldLabelIndentLevel + 1);
-      //}
   }
   
   void DoEmissionArea(Material material)
@@ -502,8 +510,8 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   }
   void DoCustomOutlineArea()
   {
-      m_MaterialEditor.ShaderProperty(outlineWidth, Styles.outlineWidthText);
       if (m_OutlineEnable) {
+          m_MaterialEditor.ShaderProperty(outlineWidth, Styles.outlineWidthText);
           m_MaterialEditor.TexturePropertySingleLine(Styles.outlineWidthMaskText, outlineMask, outlineColor);
           if (outlineMask.textureValue != null)
               m_MaterialEditor.TextureScaleOffsetProperty(outlineMask);
@@ -546,30 +554,30 @@ public class EmToon6PBSShaderGUI : ShaderGUI
           emissionColor.colorValue = Color.white;
   }
 
-  public static void SetupMaterialWithBlendMode(Material material, BlendMode blendMode)
+  static void SetupMaterialWithBlendMode(Material material, BlendMode blendMode)
   {
       switch (blendMode)
       {
-          //case BlendMode.Opaque:
-          //    material.SetOverrideTag("RenderType", "");
-          //    material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
-          //    material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
-          //    material.SetInt("_ZWrite", 1);
-          //    material.DisableKeyword("_ALPHATEST_ON");
-          //    material.DisableKeyword("_ALPHABLEND_ON");
-          //    material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
-          //    material.renderQueue = -1;
-          //    break;
-          //case BlendMode.Cutout:
-          //    material.SetOverrideTag("RenderType", "TransparentCutout");
-          //    material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
-          //    material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
-          //    material.SetInt("_ZWrite", 1);
-          //    material.EnableKeyword("_ALPHATEST_ON");
-          //    material.DisableKeyword("_ALPHABLEND_ON");
-          //    material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
-          //    material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
-          //    break;
+          case BlendMode.Opaque:
+              material.SetOverrideTag("RenderType", "");
+              material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+              material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
+              material.SetInt("_ZWrite", 1);
+              material.DisableKeyword("_ALPHATEST_ON");
+              material.DisableKeyword("_ALPHABLEND_ON");
+              material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+              material.renderQueue = -1;
+              break;
+          case BlendMode.Cutout:
+              material.SetOverrideTag("RenderType", "TransparentCutout");
+              material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+              material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
+              material.SetInt("_ZWrite", 1);
+              material.EnableKeyword("_ALPHATEST_ON");
+              material.DisableKeyword("_ALPHABLEND_ON");
+              material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+              material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
+              break;
           case BlendMode.Fade:
               material.SetOverrideTag("RenderType", "Transparent");
               material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
@@ -629,8 +637,7 @@ public class EmToon6PBSShaderGUI : ShaderGUI
 
   static void MaterialChanged(Material material/*, WorkflowMode workflowMode*/)
   {
-      //TODO: enable for transparent
-      //SetupMaterialWithBlendMode(material, (BlendMode)material.GetFloat("_Mode"));
+      SetupMaterialWithBlendMode(material, (BlendMode)material.GetFloat("_Mode"));
 
       SetMaterialKeywords(material/*, workflowMode*/);
   }

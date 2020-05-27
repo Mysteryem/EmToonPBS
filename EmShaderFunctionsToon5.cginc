@@ -190,7 +190,7 @@ half3 getReflectionUV(half3 direction, half3 position, half4 cubemapPosition, ha
 }
 
 half3 Em_IndirectSpecular(FragmentCommonDataPlus data, half occlusion, GlossyEnvironmentDataPlus glossIn, samplerCUBE ReflectionCubemap, float4 ReflectionCubemap_HDR, bool Usecubemapinsteadofreflectionprobes) {
-    #ifdef UNITY_PASS_FORWARDBASE
+    #if defined(UNITY_PASS_FORWARDBASE) && !defined(_GLOSSYREFLECTIONS_OFF)
         bool noReflectionProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, half3(0,0,0), 0).w == 0;
         bool useFallbackReflections = Usecubemapinsteadofreflectionprobes || noReflectionProbe;
     

@@ -4,7 +4,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
         _Color ("Color", Color) = (1,1,1,1)
         _MainTex ("Main texture (RGB albedo)", 2D) = "white" {}
         
-        //_Cutoff("Alpha Cutoff", Range(0.0, 1.0)) = 0.5
+        _Cutoff("Alpha Cutoff", Range(0.0, 1.0)) = 0.5
         
         _MetallicGlossMap("Metallic/Smoothness (X)/Smoothness Y/Anisotropy map", 2D) = "white" {}
         
@@ -62,7 +62,28 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
         [Enum(Off,0,On,1)] _FixedHueShift ("Fixed Hue Shift", Int) = 0
         [HDR]_OutlineColor("Outline Color", Color) = (0,0,0,1)
         _OutlineWidth("Outline Width", Range(0, 5)) = 0.1
+        
+        //TODO
+        _OutlineAlbedoTint("Outline Albedo Tint", Range(0,1)) = 1
+        //TODO
+        _OutlineEmission("Outline Emission", Range(0,1)) = 0
+        
+        
+        //TODO:
+        //r = width
+        //g = albedo blend ('tint' or 'multiply')
+        //b = emissive or lit
         _OutlineMask("Outline Mask", 2D) = "white" {}
+        
+        // Forward rendering options
+        [ToggleOff] _SpecularHighlights("Specular Highlights", Float) = 1.0
+        [ToggleOff] _GlossyReflections("Glossy Reflections", Float) = 1.0
+        
+        // Blending state
+        [HideInInspector] _Mode ("__mode", Float) = 0.0
+        [HideInInspector] _SrcBlend ("__src", Float) = 1.0
+        [HideInInspector] _DstBlend ("__dst", Float) = 0.0
+        [HideInInspector] _ZWrite ("__zw", Float) = 1.0
     }
     SubShader {
         Tags {
@@ -74,11 +95,21 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
             Tags {
                 "LightMode"="ForwardBase"
             }
+            
+            Blend [_SrcBlend] [_DstBlend]
+            ZWrite [_ZWrite]
           
             CGPROGRAM
             #define Geometry
             
             #pragma target 3.0
+            
+            #pragma shader_feature _NORMALMAP
+            #pragma shader_feature _ _ALPHATEST_ON _ALPHABLEND_ON _ALPHAPREMULTIPLY_ON
+            #pragma shader_feature ___ _DETAIL_MULX2
+            #pragma shader_feature _ _SPECULARHIGHLIGHTS_OFF
+            #pragma shader_feature _ _GLOSSYREFLECTIONS_OFF
+            
             #pragma vertex vert
             #pragma fragment frag
             #pragma geometry geom
@@ -117,15 +148,24 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
             Tags {
                 "LightMode"="ForwardAdd"
             }
-            // Correct
-            Blend One One
+            Blend [_SrcBlend] One
+            Fog { Color (0,0,0,0) } // in additive pass fog should be black
+            ZWrite Off
+            ZTest LEqual
             
             CGPROGRAM
-            //#define Geometry
+            #define Geometry
+            
+            #pragma target 3.0
+            
+            #pragma shader_feature _NORMALMAP
+            #pragma shader_feature _ _ALPHATEST_ON _ALPHABLEND_ON _ALPHAPREMULTIPLY_ON
+            #pragma shader_feature ___ _DETAIL_MULX2
+            #pragma shader_feature _ _SPECULARHIGHLIGHTS_OFF
             
             #pragma vertex vert
             #pragma fragment frag
-            //#pragma geometry geom
+            #pragma geometry geom
             //#pragma multi_compile_fwdadd_fullshadows
             #pragma multi_compile_fog
             #pragma multi_compile_fwdadd_fullshadows

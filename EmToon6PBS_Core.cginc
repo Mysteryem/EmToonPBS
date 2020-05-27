@@ -2,12 +2,11 @@
 // TODO: Detail normals, detail albedo, choosable UV set (may need to change vert function, aren't we out of passable interpolator variables?)
 #include "EmShaderFunctionsToon5.cginc"
 
-// TODO: Replace with conditional definition from UI having a normal map or not
-#define _NORMALMAP
-
 uniform fixed4 _Color;
 uniform UNITY_DECLARE_TEX2D(_MainTex);
 uniform float4 _MainTex_ST;
+
+uniform fixed _Cutoff;
 
 //uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_LowLightTex);
 //uniform float4 _LowLightTex_ST;
@@ -201,7 +200,7 @@ VertexOutput vert (VertexData v) {
             float4 posWorld = (mul(unity_ObjectToWorld, IN[i].vertex));
             //half outlineWidthMask = tex2Dlod(_OutlineMask, float4(IN[i].uv, 0, 0));
             //half outlineWidthMask = EM_SAMPLE_TEX2D_LOD_SAMPLER(_OutlineMask, _MainTex, IN[i].uv0, 0);
-            half outlineWidthMask = EM_SAMPLE_TEX2D_LOD(_OutlineMask, TRANSFORM_TEX(IN[i].uv0, _OutlineMask), 1);
+            half outlineWidthMask = EM_SAMPLE_TEX2D_LOD(_OutlineMask, TRANSFORM_TEX(IN[i].uv0, _OutlineMask), 1).r;
             float3 outlineWidth = _OutlineWidth * .01 * outlineWidthMask;
 
             outlineWidth *= min(distance(posWorld, _WorldSpaceCameraPos) * 3, 1);
@@ -328,15 +327,15 @@ half4 frag(
     #endif
   #endif
 #else
-    half3 doubleSidedNormals = normalDirection;
-    half3 doubleSidedTangent = cross(i.bitangentDir, doubleSidedNormals);
-    half3 doubleSidedBitangent = cross(doubleSidedNormals, doubleSidedTangent);
+    half3 doubleSidedNormals = i.normalDir;
+    half3 doubleSidedTangent = i.tangentDir;
+    half3 doubleSidedBitangent = i.bitangentDir;
 #endif
     
     
     // ------- View and reflection directions
     half3 viewDirection = normalize(_WorldSpaceCameraPos.xyz - i.posWorld.xyz);
-    half3 viewReflectDirection = reflect( -viewDirection, normalDirection );
+    half3 viewReflectDirection = reflect( -viewDirection, doubleSidedNormals );
     half3 velvetDirection = normalize(doubleSidedNormals-0.5*viewDirection);
     
     half3 lightDirection = UnityWorldSpaceLightDir(i.posWorld.xyz);
@@ -545,10 +544,15 @@ half4 frag(
     
     // ------- Diffuse texture
     
+    // TODO: Move near the top
     // Allow using a second texture that is used as light decreases?
     //half lowLightTexturePick = saturate(1-pow(max(0,grayscale(finalDiffuseLight)*2-1), 1));
     //fixed4 sampledMainTexture = lerp(UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)), UNITY_SAMPLE_TEX2D_SAMPLER(_LowLightTex,_MainTex, TRANSFORM_TEX(mainUV, _LowLightTex)), lowLightTexturePick);
     fixed4 sampledMainTexture = UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)) * _Color * half4(i.color.rgb, 1);
+
+#if defined(_ALPHATEST_ON)
+    clip(sampledMainTexture.a - _Cutoff);
+#endif
     
 #if defined(HMD_HUE)
     fixed3 diffuseAndColour = sampledMainTexture.rgb;
@@ -560,7 +564,7 @@ half4 frag(
                 node_3045 = float3(abs(node_3045_q.z + (node_3045_q.w - node_3045_q.y) / (6.0 * node_3045_d + node_3045_e)), node_3045_d / (node_3045_q.x + node_3045_e), node_3045_q.x);
                 node_1294 = (lerp(float3(1,1,1),saturate(3.0*abs(1.0-2.0*frac((hueOffset+node_4111)+float3(0.0,-1.0/3.0,1.0/3.0)))-1),node_3045.g)*node_3045.b);
                 
-    sampledMainTexture = lerp(sampledMainTexture, fixed4(node_1294,1), hueMask);
+    sampledMainTexture = lerp(sampledMainTexture, fixed4(node_1294,sampledMainTexture.a), hueMask);
 #endif
     
     fixed3 diffuseComponent = lerp((sampledMainTexture), grayscale(sampledMainTexture.rgb), (-1 * (_SaturationAdjustment)));
@@ -624,7 +628,10 @@ half4 frag(
     
     // ------- Specular
     // -- Dynamic Light specular
-    
+    half roughness = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughness);
+#if defined(_SPECULARHIGHLIGHTS_OFF)
+    half3 sharedSpecularComponent = 0;
+#else
     half anisoSpecLimitSmoothness = saturate(2 * max(_Glossiness,_SmoothnessY));
     
     half3 sharedSpecular = 0;
@@ -635,7 +642,6 @@ half4 frag(
 
     half roughnessX = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughnessX);
     half roughnessY = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughnessY);
-    half roughness = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughness);
     fixed4 sampledSpecularColourMap = tex2D(_SpecularMap, TRANSFORM_TEX(mainUV, _SpecularMap));
     // We want a really quick blend from normal style to toon style and to then use the rest of the slider/map value to control how smooth the edges of the toon specular are
     // We have to be careful not to blend into toon specular right at 0 as the immediate blend between ~95% normal an ~5% toon is horrible, any values near to zero should result in normal specular to account for mipmapping
@@ -649,7 +655,7 @@ half4 frag(
     // (0.2,1] -> 100% toon
     isToonSpecular = saturate(10 * isToonSpecular - 1);
     fixed toonSpecularBrightness = sqr(max(fragmentCommonData.smoothnessX, fragmentCommonData.smoothnessY));
-#if defined(POINT) || defined(SPOT) || defined(DIRECTIONAL) || defined(POINT_COOKIE) || defined(DIRECTIONAL_COOKIE) 
+  #if defined(POINT) || defined(SPOT) || defined(DIRECTIONAL) || defined(POINT_COOKIE) || defined(DIRECTIONAL_COOKIE) 
     
     half nDotH = dot(doubleSidedNormals, halfLightDirection);
     half tDotL = dot(doubleSidedTangent, lightDirection);
@@ -667,9 +673,9 @@ half4 frag(
 
     anisotropicSpecular *= anisotropicSpecularVisibility;
 
-#	ifdef UNITY_COLORSPACE_GAMMA
+    #ifdef UNITY_COLORSPACE_GAMMA
     anisotropicSpecular = sqrt(max(1e-2h, anisotropicSpecular));
-#	endif
+    #endif
     // Supposedly specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
     anisotropicSpecular = max(0, anisotropicSpecular * nDotL);
     // Limit overbrightening on weird normals
@@ -697,8 +703,8 @@ half4 frag(
                             sampledSpecularColourMap.rgb * // Specular map property
                             _SpecularColour.rgb; // Specular colour property
     sharedSpecular += max(0, dynamicSpecular);
-#endif
-#if defined(UNITY_PASS_FORWARDBASE)
+  #endif
+  #if defined(UNITY_PASS_FORWARDBASE)
     bool shDirectionalSpecularAlwaysOn = _ShDirectionalSpecularOn == 1;
     bool shDirectionalSpecularOnIfNoDynamic = _ShDirectionalSpecularOn == 2;
     bool shReflectionSpecularAlwaysOn = _ShReflectionSpecularOn == 1;
@@ -730,9 +736,9 @@ half4 frag(
     half anisotropicSHSpecular = D_GGXAnisotropic(tDotSHH, bDotSHH, nDotSHH, roughnessX, roughnessY);
 
     anisotropicSHSpecular *= anisotropicSHSpecularVisibility;
-#	ifdef UNITY_COLORSPACE_GAMMA
+    #	ifdef UNITY_COLORSPACE_GAMMA
     anisotropicSHSpecular = sqrt(max(1e-2h, anisotropicSHSpecular));
-#	endif
+    #	endif
     // note: was 2*shLightDir
     
     half3 shSpecularColour = max(0,ShadeSH9(half4(1*shLightDir, 1))-ShadeSH9(half4(0,0,0,1)));
@@ -786,9 +792,9 @@ half4 frag(
     half anisotropicSHRSpecular = D_GGXAnisotropic(tDotSHRH, bDotSHRH, nDotSHRH, roughnessX, roughnessY);
     anisotropicSHRSpecular *= anisotropicSHRSpecularVisibility;
     
-#	ifdef UNITY_COLORSPACE_GAMMA
+    #	ifdef UNITY_COLORSPACE_GAMMA
     anisotropicSHRSpecular = sqrt(max(1e-2h, anisotropicSHRSpecular));
-#	endif
+    #	endif
     // Trial and error to get nice values, it's pretty similar to just doing ShadeSH9 with unchanged normals, though doesn't seem to result in such big issues with directional baked lights
     half3 sss = max(0,ShadeSH9(half4(0.5*normalize(shSpecularDirection+doubleSidedNormals), 1))-0.4*ShadeSH9(half4(0,0,0,1)));
     // wondering what it would look like without the second sss term
@@ -831,9 +837,9 @@ half4 frag(
     
     sharedSpecular += max(0,max(bakedSpecular, shDirectionalSpecular));
     
+  #endif
+    half3 sharedSpecularComponent = sharedSpecular;
 #endif
-    half3 finalSpecular = sharedSpecular;
-    half3 sharedSpecularComponent = finalSpecular;
     
     
 
@@ -871,6 +877,9 @@ half4 frag(
     // There isn't any indirect specular anyway since we're in a forwardadd pass, but maybe this will let the compiler be even more aggressive with removing unneeded code
     half indirectSpecularModifier = 0;
     #endif
+    #if defined(_ALPHAPREMULTIPLY_ON)
+    finalDiffuse *= sampledMainTexture.a;
+    #endif
     half3 finalColor = finalDiffuse * occlusion
                        + sharedSpecularComponent * specularKill
                        + surfaceReduction * emIndirectSpecular * indirectSpecularFresnelLerp * indirectSpecularModifier;
@@ -899,6 +908,10 @@ half4 frag(
     //return max(0, half4(finalColor,1) * 0.001 - 1) + newShadows;
     //return max(0, half4(finalColor,1) * 0.001 - 1) + newShadows;
     //#else
+#if defined(_ALPHABLEND_ON) || defined(_ALPHAPREMULTIPLY_ON)
+    return half4(finalColor,sampledMainTexture.a);
+#else
     return half4(finalColor,1);
+#endif
     //#endif
 }
