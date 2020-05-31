@@ -59,11 +59,16 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
         [Enum(Off,0,On,1)] _Usecubemapinsteadofreflectionprobes ("Use fallback instead of probes", Int) = 0
         _HueMask ("Hue Mask", 2D) = "white" {}
         _HueShift ("Hue Shift", Range(0,1)) = 0
-        [Enum(Off,0,On,1)] _FixedHueShift ("Fixed Hue Shift", Int) = 0
+        [Enum(Add,0,Set,1)] _HueAddOrSet ("Add Or Set Hue", Range(0.0, 1.0)) = 1.0
+        // Same as above, there's not much point having a fixed hue shift, since the albedo/emission textures can just be changed instead
+        [Enum(Camera based,0,Fixed,1)] _FixedHueShift ("Fixed Hue Shift", Int) = 0
         
         // Forward rendering options
         [ToggleOff] _SpecularHighlights("Specular Highlights", Float) = 1.0
         [ToggleOff] _GlossyReflections("Glossy Reflections", Float) = 1.0
+        
+        // Additional toggle options
+        [Toggle(_PARALLAXMAP)] _HueEnabled("Hue Change Effect", Float) = 0.0
         
         // Blending state
         [HideInInspector] _Mode ("__mode", Float) = 0.0
@@ -94,6 +99,8 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
             #pragma shader_feature ___ _DETAIL_MULX2
             #pragma shader_feature _ _SPECULARHIGHLIGHTS_OFF
             #pragma shader_feature _ _GLOSSYREFLECTIONS_OFF
+            // Using this keyword to enable/disable HMD_HUE
+            #pragma shader_feature _ _PARALLAXMAP
             
             #pragma vertex vert
             #pragma fragment frag
@@ -119,8 +126,10 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
             #ifndef UNITY_PASS_FORWARDBASE
                 #define UNITY_PASS_FORWARDBASE
             #endif
-            #ifndef HMD_HUE
-                #define HMD_HUE
+            #ifdef _PARALLAXMAP
+                #ifndef HMD_HUE
+                    #define HMD_HUE
+                #endif
             #endif
             
             #include "EmToon6PBS_Core.cginc"
@@ -146,6 +155,8 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
             #pragma shader_feature _ _ALPHATEST_ON _ALPHABLEND_ON _ALPHAPREMULTIPLY_ON
             #pragma shader_feature ___ _DETAIL_MULX2
             #pragma shader_feature _ _SPECULARHIGHLIGHTS_OFF
+            // Using this keyword to enable/disable HMD_HUE
+            #pragma shader_feature _ _PARALLAXMAP
             
             #pragma vertex vert
             #pragma fragment frag
@@ -159,8 +170,10 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
             #ifndef UNITY_PASS_FORWARDADD
                  #define UNITY_PASS_FORWARDADD
             #endif
-            #ifndef HMD_HUE
-                #define HMD_HUE
+            #ifdef _PARALLAXMAP
+                #ifndef HMD_HUE
+                    #define HMD_HUE
+                #endif
             #endif
             
             #include "EmToon6PBS_Core.cginc"

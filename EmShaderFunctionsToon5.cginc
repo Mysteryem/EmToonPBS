@@ -189,43 +189,49 @@ half3 getReflectionUV(half3 direction, half3 position, half4 cubemapPosition, ha
     return direction;
 }
 
-half3 Em_IndirectSpecular(FragmentCommonDataPlus data, half occlusion, GlossyEnvironmentDataPlus glossIn, samplerCUBE ReflectionCubemap, float4 ReflectionCubemap_HDR, bool Usecubemapinsteadofreflectionprobes) {
-    #if defined(UNITY_PASS_FORWARDBASE) && !defined(_GLOSSYREFLECTIONS_OFF)
-        bool noReflectionProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, half3(0,0,0), 0).w == 0;
-        bool useFallbackReflections = Usecubemapinsteadofreflectionprobes || noReflectionProbe;
-    
-        half3 R = glossIn.reflUVW;
-        half perceptualRoughness = min(glossIn.perceptualRoughnessX, glossIn.perceptualRoughnessY);
-    
-        perceptualRoughness *= 1.7 - 0.7 * perceptualRoughness;
-    
-        half mip = perceptualRoughnessToMipmapLevel(perceptualRoughness);
-        
-        half3 specular;
-        
-        half3 env0Fallback = glossIn.reflectionFallbackMultiplier * DecodeHDR(texCUBElod(ReflectionCubemap, half4(R, mip)), ReflectionCubemap_HDR);
-        
-        half3 R1 = getReflectionUV(R, data.posWorld, unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin, unity_SpecCube0_BoxMax);
-        half4 env0Probe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, R1, mip);
-        half3 env0 = useFallbackReflections ? env0Fallback : DecodeHDR(env0Probe, unity_SpecCube0_HDR);
-        #if UNITY_SPECCUBE_BLENDING
-            const float kBlendFactor = 0.99999;
-            float blendLerp = unity_SpecCube0_BoxMin.w;
-            UNITY_BRANCH
-            if (blendLerp < kBlendFactor || true)
-            {
-                half3 R2 = getReflectionUV(R, data.posWorld, unity_SpecCube1_ProbePosition, unity_SpecCube1_BoxMin, unity_SpecCube1_BoxMax);
-
-                half4 env1Probe = UNITY_SAMPLE_TEXCUBE_SAMPLER_LOD(unity_SpecCube1, unity_SpecCube0, R2, mip);
-                half3 env1 = DecodeHDR(env1Probe, unity_SpecCube1_HDR);
-                specular = lerp(env1, env0, blendLerp);
-            }
-            else
-            {
-                specular = env0;
-            }
+inline half3 Em_IndirectSpecular(FragmentCommonDataPlus data, half occlusion, GlossyEnvironmentDataPlus glossIn, samplerCUBE ReflectionCubemap, float4 ReflectionCubemap_HDR, bool Usecubemapinsteadofreflectionprobes) {
+    #if defined(UNITY_PASS_FORWARDBASE)
+        #if defined(_GLOSSYREFLECTIONS_OFF)
+            half3 specular = unity_IndirectSpecColor.rgb;
         #else
-            //specular = env0;
+            bool noReflectionProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, half3(0,0,0), 0).w == 0;
+            bool useFallbackReflections = Usecubemapinsteadofreflectionprobes || noReflectionProbe;
+        
+            half3 R = glossIn.reflUVW;
+            half perceptualRoughness = min(glossIn.perceptualRoughnessX, glossIn.perceptualRoughnessY);
+        
+            perceptualRoughness *= 1.7 - 0.7 * perceptualRoughness;
+        
+            half mip = perceptualRoughnessToMipmapLevel(perceptualRoughness);
+            
+            half3 specular;
+            
+            half3 env0Fallback = glossIn.reflectionFallbackMultiplier * DecodeHDR(texCUBElod(ReflectionCubemap, half4(R, mip)), ReflectionCubemap_HDR);
+            
+            half3 R1 = getReflectionUV(R, data.posWorld, unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin, unity_SpecCube0_BoxMax);
+            half4 env0Probe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, R1, mip);
+            half3 env0 = useFallbackReflections ? env0Fallback : DecodeHDR(env0Probe, unity_SpecCube0_HDR);
+            // Maybe instead we could use a shaderfeature and then "#undef UNITY_SPECCUBE_BLENDING"? Not sure if it's worth it.
+            float blendLerp = useFallbackReflections ? 0 : unity_SpecCube0_BoxMin.w;
+            #if UNITY_SPECCUBE_BLENDING
+                const float kBlendFactor = 0.99999;
+                blendLerp = unity_SpecCube0_BoxMin.w;
+                UNITY_BRANCH
+                if (blendLerp < kBlendFactor || true)
+                {
+                    half3 R2 = getReflectionUV(R, data.posWorld, unity_SpecCube1_ProbePosition, unity_SpecCube1_BoxMin, unity_SpecCube1_BoxMax);
+
+                    half4 env1Probe = UNITY_SAMPLE_TEXCUBE_SAMPLER_LOD(unity_SpecCube1, unity_SpecCube0, R2, mip);
+                    half3 env1 = DecodeHDR(env1Probe, unity_SpecCube1_HDR);
+                    specular = lerp(env1, env0, blendLerp);
+                }
+                else
+                {
+                    specular = env0;
+                }
+            #else
+                //specular = env0;
+            #endif
         #endif
         
         return specular * occlusion;

@@ -66,6 +66,7 @@ uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_HueMask);
 uniform float4 _HueMask_ST;
 uniform fixed _HueShift;
 uniform fixed _FixedHueShift;
+uniform fixed _HueAddOrSet;
 #endif
 
 #if defined(Geometry)
@@ -508,10 +509,13 @@ half4 frag(
 
     // ------- Hue setup
 #if defined(HMD_HUE)
-    half2 node_6122 = float2(lerp(unity_OrthoParams.x, 0, _FixedHueShift),0.0);
+    // This is the pseudo-random number generator taken from a ShaderForge shader, hence why the variables have horrible names and why I don't actually know what's going on. Though a couple are just constants used in conversion from RGB to HSV
+    float hueInput = unity_OrthoParams.x;
+    half2 node_6122 = float2(hueInput,0.0);
     float2 node_4111_skew = node_6122 + 0.2127+node_6122.x*0.3713*node_6122.y;
     float2 node_4111_rnd = 4.789*sin(489.123*(node_4111_skew));
     half node_4111 = frac(node_4111_rnd.x*node_4111_rnd.y*(1+node_4111_skew.x));
+    node_4111 = lerp(node_4111, 0, _FixedHueShift);
     float4 node_3045_k = float4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
     fixed hueOffset = _HueShift;
     float node_3045_e = 1.0e-10;
@@ -519,7 +523,7 @@ half4 frag(
     float4 node_3045_p = 0;
     float4 node_3045_q = 0;
     float node_3045_d = 0;
-    fixed3 node_3045 = 0;
+    fixed3 colorInHSV = 0;
     float3 node_1294 = 0;
     fixed hueMask = UNITY_SAMPLE_TEX2D_SAMPLER(_HueMask, _MainTex, TRANSFORM_TEX(mainUV, _HueMask)).r;
 #endif 
@@ -535,8 +539,9 @@ half4 frag(
     node_3045_q = lerp(float4(node_3045_p.xyw, float4(emissive,0.0).x), float4(float4(emissive,0.0).x, node_3045_p.yzx), step(node_3045_p.x, float4(emissive,0.0).x));
     node_3045_d = node_3045_q.x - min(node_3045_q.w, node_3045_q.y);
     
-    node_3045 = float3(abs(node_3045_q.z + (node_3045_q.w - node_3045_q.y) / (6.0 * node_3045_d + node_3045_e)), node_3045_d / (node_3045_q.x + node_3045_e), node_3045_q.x);
-    node_1294 = (lerp(float3(1,1,1),saturate(3.0*abs(1.0-2.0*frac((hueOffset+node_4111)+float3(0.0,-1.0/3.0,1.0/3.0)))-1),node_3045.g)*node_3045.b);
+    colorInHSV = float3(abs(node_3045_q.z + (node_3045_q.w - node_3045_q.y) / (6.0 * node_3045_d + node_3045_e)), node_3045_d / (node_3045_q.x + node_3045_e), node_3045_q.x);
+    half initialEmissiveHue = lerp(colorInHSV.r, 0, _HueAddOrSet);
+    node_1294 = (lerp(float3(1,1,1),saturate(3.0*abs(1.0-2.0*frac((initialEmissiveHue+hueOffset+node_4111)+float3(0.0,-1.0/3.0,1.0/3.0)))-1),colorInHSV.g)*colorInHSV.b);
                 
     emissive = lerp(emissive,node_1294,hueMask);
 #endif
@@ -556,24 +561,34 @@ half4 frag(
     
 #if defined(HMD_HUE)
     fixed3 diffuseAndColour = sampledMainTexture.rgb;
-
+    
                 node_3045_p = lerp(float4(float4(diffuseAndColour,0.0).zy, node_3045_k.wz), float4(float4(diffuseAndColour,0.0).yz, node_3045_k.xy), step(float4(diffuseAndColour,0.0).z, float4(diffuseAndColour,0.0).y));
                 node_3045_q = lerp(float4(node_3045_p.xyw, float4(diffuseAndColour,0.0).x), float4(float4(diffuseAndColour,0.0).x, node_3045_p.yzx), step(node_3045_p.x, float4(diffuseAndColour,0.0).x));
                 node_3045_d = node_3045_q.x - min(node_3045_q.w, node_3045_q.y);
 
-                node_3045 = float3(abs(node_3045_q.z + (node_3045_q.w - node_3045_q.y) / (6.0 * node_3045_d + node_3045_e)), node_3045_d / (node_3045_q.x + node_3045_e), node_3045_q.x);
-                node_1294 = (lerp(float3(1,1,1),saturate(3.0*abs(1.0-2.0*frac((hueOffset+node_4111)+float3(0.0,-1.0/3.0,1.0/3.0)))-1),node_3045.g)*node_3045.b);
+                colorInHSV = float3(abs(node_3045_q.z + (node_3045_q.w - node_3045_q.y) / (6.0 * node_3045_d + node_3045_e)), node_3045_d / (node_3045_q.x + node_3045_e), node_3045_q.x);
+                half initialHue = lerp(colorInHSV.r, 0, _HueAddOrSet);
+                node_1294 = (lerp(float3(1,1,1),saturate(3.0*abs(1.0-2.0*frac((initialHue+hueOffset+node_4111)+float3(0.0,-1.0/3.0,1.0/3.0)))-1),colorInHSV.g)*colorInHSV.b);
                 
     sampledMainTexture = lerp(sampledMainTexture, fixed4(node_1294,sampledMainTexture.a), hueMask);
 #endif
     
-    fixed3 diffuseComponent = lerp((sampledMainTexture), grayscale(sampledMainTexture.rgb), (-1 * (_SaturationAdjustment)));
+    fixed3 albedoComponent = lerp((sampledMainTexture), grayscale(sampledMainTexture.rgb), (-1 * (_SaturationAdjustment)));
 
     // -------- Direct and Indirect specular
     half3 __specColor;
     half __oneMinusReflectivity;
     // Note that this is actually albedoComponent for metallic workflow
-    half3 __diffColor = DiffuseAndSpecularFromMetallic(diffuseComponent, _Metallic, __specColor, __oneMinusReflectivity);
+    half3 __diffColor = DiffuseAndSpecularFromMetallic(albedoComponent, _Metallic, __specColor, __oneMinusReflectivity);
+    
+    //return half4(__diffColor + 0.5,1);
+    
+    half outputAlpha;
+    __diffColor = PreMultiplyAlpha(__diffColor, sampledMainTexture.a, __oneMinusReflectivity, /*out*/ outputAlpha);
+    
+    //FragmentCommonData fcd = RoughnessSetup(i.tex);
+    //FragmentCommonData fcd = UNITY_SETUP_BRDF_INPUT(i.tex);
+    
     
     FragmentCommonDataPlus fragmentCommonData = (FragmentCommonDataPlus)0;
     fragmentCommonData.diffColor = __diffColor;
@@ -863,7 +878,7 @@ half4 frag(
     half specularKill = any(fragmentCommonData.specColor) ? 1.0 : 0.0;
     half grazingTerm = saturate(max(fragmentCommonData.smoothnessX, fragmentCommonData.smoothnessY) + (1-fragmentCommonData.oneMinusReflectivity));
 
-    half indirectSpecularFresnelLerp = FresnelLerp(fragmentCommonData.specColor, grazingTerm, saturate(dot(fragmentCommonData.normalWorld, -fragmentCommonData.eyeVec)));
+    half3 indirectSpecularFresnelLerp = FresnelLerp(fragmentCommonData.specColor, grazingTerm, saturate(dot(fragmentCommonData.normalWorld, -fragmentCommonData.eyeVec)));
     //indirectSpecularFresnelLerp = lerp(indirectSpecularFresnelLerp, 0, isToonSpecular);
 
    
@@ -877,11 +892,8 @@ half4 frag(
     // There isn't any indirect specular anyway since we're in a forwardadd pass, but maybe this will let the compiler be even more aggressive with removing unneeded code
     half indirectSpecularModifier = 0;
     #endif
-    #if defined(_ALPHAPREMULTIPLY_ON)
-    finalDiffuse *= sampledMainTexture.a;
-    #endif
-    half3 finalColor = finalDiffuse * occlusion
-                       + sharedSpecularComponent * specularKill
+    half3 finalColor = finalDiffuse * occlusion * 1
+                       + sharedSpecularComponent * specularKill * 1
                        + surfaceReduction * emIndirectSpecular * indirectSpecularFresnelLerp * indirectSpecularModifier;
     finalColor = max(finalColor, emissive);
     
@@ -906,10 +918,10 @@ half4 frag(
     //half4 debugValue = half4(debugValue3, 1);
     //return max(0, half4(finalColor,1) * 0.001 - 1) + 1 - lightAttenuation.shadow;
     //return max(0, half4(finalColor,1) * 0.001 - 1) + newShadows;
-    //return max(0, half4(finalColor,1) * 0.001 - 1) + newShadows;
+    //return max(0, half4(finalColor,1) * 0.001 - 1) + grazingTerm;
     //#else
 #if defined(_ALPHABLEND_ON) || defined(_ALPHAPREMULTIPLY_ON)
-    return half4(finalColor,sampledMainTexture.a);
+    return half4(finalColor,outputAlpha);
 #else
     return half4(finalColor,1);
 #endif

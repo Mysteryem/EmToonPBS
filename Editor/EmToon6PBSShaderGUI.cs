@@ -21,7 +21,7 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   
   private static class Styles
   {
-    public static GUIContent uvSetLabel = new GUIContent("UV Set");
+    public static GUIContent uvSetLabel = new GUIContent("Detail UV Set");
     
     public static GUIContent albedoText = new GUIContent("Albedo", "Albedo (RGB) and Transparency (A)");
     public static GUIContent alphaCutoffText = new GUIContent("Alpha Cutoff", "Threshold for alpha cutoff");
@@ -52,14 +52,20 @@ public class EmToon6PBSShaderGUI : ShaderGUI
     
     // Custom Styles
     public static GUIContent cullingModeText = new GUIContent("Culling Mode", "Culling Mode");
-    public static GUIContent hueMaskText = new GUIContent("Hue Mask", "Hue Mask (?)");
+    public static GUIContent hueEnabledText = new GUIContent("Hue Change Effect", "Enable the Hue Change Effect, applies to Albedo and Emission");
+    public static GUIContent hueAddOrSetText = new GUIContent("Hue Add Or Set", "Add to the existing hue (0) or ignore the existing hue and set the new hue directly (1). Values between 0 and 1 are not advised");
+    public static GUIContent hueMaskText = new GUIContent("Hue Mask", "Hue Mask (Description TODO)");
     public static GUIContent hueShiftText = new GUIContent("Hue Offset", "Offset the hue shift");
-    public static GUIContent fixedHueShiftText = new GUIContent("Fixed Hue Offset", "When on, all cameras will see the same hue");
+    public static GUIContent fixedHueShiftText = new GUIContent("Fixed Hue Offset", "When on, all cameras will see the same hue.\nWhen off, different cameras will have a different pseudo-random hue value applied. Almost every VR user will have a slightly different value. Desktop users and 2D cameras with the same resolution will have the same value.");
     public static GUIContent saturationAdjustText = new GUIContent("Saturation Adjustment", "Adjust Albedo Saturation");
     public static GUIContent metallicText = new GUIContent("Metallic", "Typically a material is either metal or not metal, but most metals will have a small amount of dust or dirt on their surface, so 0.9 may be better for metallic materials. A pure metal won't receive shadows for example, but in a more realistic material, you would see the shadow cast on the dust/dirt on the metal's surface.");
     public static GUIContent smoothnessXText = new GUIContent("Smoothness/Smoothness X", "Smoothness/Smoothness X value");
     public static GUIContent smoothnessYText = new GUIContent("Smoothness Y", "Smoothness Y, used with Anisotropy");
     public static GUIContent anisotropyText = new GUIContent("Anisotropy", "Anisotropy, used with Smoothness X and Smoothness Y for materials like hair and brushed metal that reflect light more or less in different directions. The X and Y directions are determined by the tangent direction of each vertex which are typically calculated from UVs, make sure tangents are imported or calculated in your model import settings. Note that Blender's FBX export doesn't export tangents by default and requires all polygons in your model to have only 3 or 4 sides.");
+    public static GUIContent specularColorText = new GUIContent("Specular Color", "Specular Color (rgb) is not normally available with a metallic workflow, but is useful when combined with Toon Specular. Alpha (a) is multiplied with the Toon Specular option to let you have both toon and normal specular on one material.");
+    public static GUIContent specularSharpnessText = new GUIContent("Toon Specular", "Control whether normal or toon specular is used, values less than 1 will reduce the toon specular sharpness until the control switches over to normal specular");
+    public static GUIContent directionSHSpecularText = new GUIContent("SH Directional Specular", "Enable specular highlights for the most significant lighting direction from Spherical Harmonics (light probes)");
+    public static GUIContent reflectionSHSpecularText = new GUIContent("SH Reflection Specular", "Enable specular highlights from Spherical Harmonics based on the view reflection direction");
     public static GUIContent capAnisotropicSpecularText = new GUIContent("Cap Anisotropic Specular", "Particularly bad vertex normals can cause severely bright specular highlights with the currently used anisotropic specular function, turning this on will limit the maximum brightness to fairly sane levels, turn this on if you are using anisotropic specular and get blinded by the specular highlights in worlds with bloom enabled (though you should probably look into fixing the vertex normals on your model)");
     public static GUIContent outlineWidthText = new GUIContent("Outline Width");
     public static GUIContent outlineWidthMaskText = new GUIContent("Outline Mask", "Multiplied by the slider value. Colouring works similar to Cubed's FlatLitToon whereby the outlines are diffuse lit (diffuse lights * albedo). Note that specular highlights and reflections are excluded from outlines.");
@@ -76,6 +82,7 @@ public class EmToon6PBSShaderGUI : ShaderGUI
     public static GUIContent shadowSharpnessText = new GUIContent("Shadow Sharpness", "Dynamic shadow sharpness. Works similarly to XSToon");
     public static GUIContent shadowLiftText = new GUIContent("Shadow Lift", "Dynamic shadow lift. Decreases the strength of dynamic shadows. A small amount, ~0.1, is helpful for very poorly lit worlds that have a single dynamic directional light with full strength shadows");
     public static GUIContent emissionMapText = new GUIContent("Emission");
+    public static GUIContent unusedTextureText = new GUIContent("!!! Unused texture !!!");
     
   }
   
@@ -92,9 +99,11 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   MaterialProperty useFallbackInsteadOfProbes = null;
   
   // Custom - Hue
+  MaterialProperty hueEnabled = null;
   MaterialProperty hueMask = null;
   MaterialProperty hueShift = null;
   MaterialProperty fixedHueShift = null;
+  MaterialProperty hueAddOrSet = null;
   
   // Custom - Outlines
   MaterialProperty outlineColor = null;
@@ -147,14 +156,20 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   MaterialEditor m_MaterialEditor;
   
   bool m_FirstTimeApply = true;
-  bool m_OutlineEnable = false;
-  bool m_HueMagicEnable = false;
-  // Note, setting this to true won't enable transparency within the shader
-  bool m_ShaderIsTransparent = false;
-  // Note, setting this to true won't enable cutout within the shader, this bool 
-  bool m_ShaderIsCutout = false;
   // TODO: Optional control that will force show all controls, even if they won't do anything with the current settings of the other controls. Alternatively, could negate and call this "Hide ineffective properties"
   bool m_ShowAllControls = false;
+  static bool m_AlbedoFoldout = true;
+  static bool m_MetallicFoldout = true;
+  static bool m_NormalFoldout = false;
+  static bool m_OcclusionFoldout = false;
+  static bool m_EmissionFoldout = false;
+  static bool m_DiffuseControlFoldout = true;
+  static bool m_DynamicShadowFoldout = false;
+  static bool m_HueChangeFoldout = false;
+  static bool m_OutlineFoldout = true;
+  static bool m_DetailFoldout = false;
+  
+  bool m_OutlineEnable = false;
   private const float kMaxfp16 = 65536f; // Clamp to a value that fits into fp16.
   ColorPickerHDRConfig m_ColorPickerHDRConfig = new ColorPickerHDRConfig(0f, kMaxfp16, 1 / kMaxfp16, 3f);
   
@@ -173,15 +188,14 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   // Custom - Secondary Maps
   reflectionFallback = FindProperty("_ReflectionCubemap", props);
   // TODO: Is this a good replacement for the reflections on/off forward rendering option? The code would need to be modified probably
-  useFallbackInsteadOfProbes = FindProperty("_Usecubemapinsteadofreflectionprobes", props);;
+  useFallbackInsteadOfProbes = FindProperty("_Usecubemapinsteadofreflectionprobes", props);
   
   // Custom - Hue
-  hueMask = FindProperty("_HueMask", props, false);
-  m_HueMagicEnable = hueMask != null;
-  if (m_HueMagicEnable) {
-      hueShift = FindProperty("_HueShift", props);
-      fixedHueShift = FindProperty("_FixedHueShift", props);
-  }
+  hueEnabled = FindProperty("_HueEnabled", props);
+  hueMask = FindProperty("_HueMask", props);
+  hueShift = FindProperty("_HueShift", props);
+  fixedHueShift = FindProperty("_FixedHueShift", props);
+  hueAddOrSet = FindProperty("_HueAddOrSet", props);
   
   // Custom - Outlines
   outlineWidth = FindProperty("_OutlineWidth", props, false);
@@ -213,10 +227,10 @@ public class EmToon6PBSShaderGUI : ShaderGUI
     albedoMap = FindProperty("_MainTex", props);
     albedoColor = FindProperty("_Color", props);
     alphaCutoff = FindProperty("_Cutoff", props);
-    specularMap = FindProperty("_SpecGlossMap", props, false);
-    specularColor = FindProperty("_SpecColor", props, false);
-    metallicMap = FindProperty("_MetallicGlossMap", props, false);
-    metallic = FindProperty("_Metallic", props, false);
+    specularMap = FindProperty("_SpecularMap", props);
+    specularColor = FindProperty("_SpecularColour", props);
+    metallicMap = FindProperty("_MetallicGlossMap", props);
+    metallic = FindProperty("_Metallic", props);
 
     smoothness = FindProperty("_Glossiness", props);
     //smoothnessScale = FindProperty("_GlossMapScale", props, false);
@@ -270,76 +284,81 @@ public class EmToon6PBSShaderGUI : ShaderGUI
           DoCustomCullingArea();
 
           // Primary properties
-          GUILayout.Label(Styles.primaryMapsText, EditorStyles.boldLabel);
-          DoAlbedoArea(material);
+          //GUILayout.Label(Styles.primaryMapsText, EditorStyles.boldLabel);
+          if (m_AlbedoFoldout = EditorGUILayout.Foldout(m_AlbedoFoldout, "Albedo", true))
+              DoAlbedoArea(material);
           EditorGUILayout.Space();
-          DoSpecularMetallicArea();
+          if (m_MetallicFoldout = EditorGUILayout.Foldout(m_MetallicFoldout, "Metallic/Specular/Reflections", true))
+              DoSpecularMetallicArea();
           EditorGUILayout.Space();
-          DoNormalArea();
+          if (m_NormalFoldout = EditorGUILayout.Foldout(m_NormalFoldout, "Normal Map", true))
+              DoNormalArea();
           //m_MaterialEditor.TexturePropertySingleLine(Styles.heightMapText, heightMap, heightMap.textureValue != null ? heigtMapScale : null);
           
           EditorGUILayout.Space();
-          bool hasOcculsionMap = occlusionMap.textureValue != null;
-          m_MaterialEditor.TexturePropertySingleLine(Styles.occlusionText, occlusionMap, hasOcculsionMap ? occlusionStrength : null);
-          if (hasOcculsionMap)
-              m_MaterialEditor.TextureScaleOffsetProperty(occlusionMap);
-          
+          if (m_OcclusionFoldout = EditorGUILayout.Foldout(m_OcclusionFoldout, "Occlusion/Rim Light", true)) {
+              bool hasOcculsionMap = occlusionMap.textureValue != null;
+              m_MaterialEditor.TexturePropertySingleLine(Styles.occlusionText, occlusionMap, hasOcculsionMap ? occlusionStrength : null);
+              if (hasOcculsionMap)
+                  m_MaterialEditor.TextureScaleOffsetProperty(occlusionMap);
+          }
           EditorGUILayout.Space();
           //DoEmissionArea(material);
-          DoCustomEmissionArea();
+          if (m_EmissionFoldout = EditorGUILayout.Foldout(m_EmissionFoldout, "Emission", true))
+              DoCustomEmissionArea();
           
           // Custom
           EditorGUILayout.Space();
-          DoCustomReflectionArea();
+          if (m_DiffuseControlFoldout = EditorGUILayout.Foldout(m_DiffuseControlFoldout, "Diffuse Control", true))
+              DoCustomDiffuseControlArea();
           EditorGUILayout.Space();
-          DoCustomDiffuseControlArea();
+          if (m_DynamicShadowFoldout = EditorGUILayout.Foldout(m_DynamicShadowFoldout, "Dynamic Shadows", true))
+              DoCustomShadowsControlArea();
           EditorGUILayout.Space();
-          DoCustomShadowsControlArea();
+          if (m_HueChangeFoldout = EditorGUILayout.Foldout(m_HueChangeFoldout, "Hue Change", true))
+              DoCustomHueArea();
           EditorGUILayout.Space();
-          DoCustomHueArea();
-          EditorGUILayout.Space();
-          DoCustomOutlineArea();
+          if (m_OutlineEnable && (m_OutlineFoldout = EditorGUILayout.Foldout(m_OutlineFoldout, "Outlines", true)))
+              DoCustomOutlineArea();
           EditorGUILayout.Space();
           
-          // Detail mask
-          m_MaterialEditor.TexturePropertySingleLine(Styles.detailMaskText, detailMask);
-          if (detailMask.textureValue != null)
-              m_MaterialEditor.TextureScaleOffsetProperty(detailMask);
-          
-          //EditorGUI.BeginChangeCheck();
-          //m_MaterialEditor.TextureScaleOffsetProperty(albedoMap);
-          //if (EditorGUI.EndChangeCheck())
-          //    emissionMap.textureScaleAndOffset = albedoMap.textureScaleAndOffset; // Apply the main texture scale and offset to the emission texture as well, for Enlighten's sake
+          if (m_DetailFoldout = EditorGUILayout.Foldout(m_DetailFoldout, "Detail (NYI)", true)) {
+              // Detail mask
+              m_MaterialEditor.TexturePropertySingleLine(Styles.detailMaskText, detailMask);
+              if (detailMask.textureValue != null)
+                  m_MaterialEditor.TextureScaleOffsetProperty(detailMask);
+              
+              //EditorGUI.BeginChangeCheck();
+              //m_MaterialEditor.TextureScaleOffsetProperty(albedoMap);
+              //if (EditorGUI.EndChangeCheck())
+              //    emissionMap.textureScaleAndOffset = albedoMap.textureScaleAndOffset; // Apply the main texture scale and offset to the emission texture as well, for Enlighten's sake
 
-          EditorGUILayout.Space();
+              EditorGUILayout.Space();
 
-          // Secondary properties
-          GUILayout.Label(Styles.secondaryMapsText, EditorStyles.boldLabel);
-          m_MaterialEditor.TexturePropertySingleLine(Styles.detailAlbedoText, detailAlbedoMap);
-          m_MaterialEditor.TexturePropertySingleLine(Styles.detailNormalMapText, detailNormalMap, detailNormalMapScale);
-          m_MaterialEditor.TextureScaleOffsetProperty(detailAlbedoMap);
-          m_MaterialEditor.ShaderProperty(uvSetSecondary, Styles.uvSetLabel.text);
-
-          // Third properties
-          GUILayout.Label(Styles.forwardText, EditorStyles.boldLabel);
-          if (highlights != null)
-              m_MaterialEditor.ShaderProperty(highlights, Styles.highlightsText);
-          if (reflections != null)
-              m_MaterialEditor.ShaderProperty(reflections, Styles.reflectionsText);
+              // Secondary properties
+              //GUILayout.Label(Styles.secondaryMapsText, EditorStyles.boldLabel);
+              m_MaterialEditor.TexturePropertySingleLine(Styles.detailAlbedoText, detailAlbedoMap);
+              if (detailAlbedoMap.textureValue != null)
+                  m_MaterialEditor.TextureScaleOffsetProperty(detailAlbedoMap);
+              m_MaterialEditor.TexturePropertySingleLine(Styles.detailNormalMapText, detailNormalMap, detailNormalMapScale);
+              if (detailNormalMap.textureValue != null)
+                  m_MaterialEditor.TextureScaleOffsetProperty(detailNormalMap);
+              m_MaterialEditor.ShaderProperty(uvSetSecondary, Styles.uvSetLabel.text);
+          }
       }
       if (EditorGUI.EndChangeCheck())
       {
-          Debug.Log("Change check true");
           foreach (var obj in blendMode.targets)
               MaterialChanged((Material)obj/*, m_WorkflowMode*/);
       }
 
-      EditorGUILayout.Space();
+      //EditorGUILayout.Space();
 
+      // Neither of these options are supported with the shader, skinned mesh renderers cannot be instanced and there is no baked lightmap support in the shader
       // NB renderqueue editor is not shown on purpose: we want to override it based on blend mode
-      GUILayout.Label(Styles.advancedText, EditorStyles.boldLabel);
-      m_MaterialEditor.EnableInstancingField();
-      m_MaterialEditor.DoubleSidedGIField();
+      //GUILayout.Label(Styles.advancedText, EditorStyles.boldLabel);
+      //m_MaterialEditor.EnableInstancingField();
+      //m_MaterialEditor.DoubleSidedGIField();
   }
   
   internal void DetermineWorkflow(MaterialProperty[] props)
@@ -424,26 +443,6 @@ public class EmToon6PBSShaderGUI : ShaderGUI
       // Custom setting
       m_MaterialEditor.ShaderProperty(saturationAdjust, Styles.saturationAdjustText);
   }
-  
-  void DoEmissionArea(Material material)
-  {
-      //// Emission for GI?
-      //if (m_MaterialEditor.EmissionEnabledProperty())
-      //{
-      //    bool hadEmissionTexture = emissionMap.textureValue != null;
-      //
-      //    // Texture and HDR color controls
-      //    //m_MaterialEditor.TexturePropertyWithHDRColor(Styles.emissionText, emissionMap, emissionColorForRendering, false);
-      //
-      //    // If texture was assigned and color was black set color to white
-      //    //float brightness = emissionColorForRendering.colorValue.maxColorComponent;
-      //    //if (emissionMap.textureValue != null && !hadEmissionTexture && brightness <= 0f)
-      //    //    emissionColorForRendering.colorValue = Color.white;
-      //
-      //    // change the GI flag and fix it up with emissive as black if necessary
-      //    m_MaterialEditor.LightmapEmissionFlagsProperty(MaterialEditor.kMiniTextureFieldLabelIndentLevel, true);
-      //}
-  }
 
   void DoSpecularMetallicArea()
   {
@@ -466,15 +465,56 @@ public class EmToon6PBSShaderGUI : ShaderGUI
       m_MaterialEditor.ShaderProperty(anisotropy, Styles.anisotropyText);
       if (hasAnisotropy)
       {
+          EditorGUI.indentLevel += 1;
           m_MaterialEditor.ShaderProperty(smoothnessY, Styles.smoothnessYText);
-          m_MaterialEditor.ShaderProperty(capAnisotropicSpecular, Styles.capAnisotropicSpecularText);
+          EditorGUI.indentLevel -= 1;
       }
-      bool hasSpecular = smoothness.floatValue != 0 || (hasAnisotropy && smoothnessY.floatValue != 0);
+      // Seems like a good idea, but we do actually get a small amount of specular even when smoothness is 0, this is correct
+      //bool hasSpecular = smoothness.floatValue != 0 || (hasAnisotropy && smoothnessY.floatValue != 0);
+      if (highlights != null)
+          m_MaterialEditor.ShaderProperty(highlights, Styles.highlightsText);
+      bool hasSpecular = highlights.floatValue != 0;
       if (hasSpecular)
       {
-          m_MaterialEditor.ShaderProperty(specularSharpness, new GUIContent("Specular Sharpness", "Use for toon specular"));
-          m_MaterialEditor.ShaderProperty(directionalSHSpecular, new GUIContent("SH Directional Specular", "Enable specular highlights for the most significant lighting direction from Spherical Harmonics (light probes)"));
-          m_MaterialEditor.ShaderProperty(reflectionSHSpecular, new GUIContent("SH Reflection Specular", "Enable specular highlights from Spherical Harmonics based on the view reflection direction"));
+          EditorGUI.indentLevel += 1;
+          m_MaterialEditor.TexturePropertySingleLine(Styles.specularColorText, specularMap, specularColor);
+          if (specularMap.textureValue != null)
+              m_MaterialEditor.TextureScaleOffsetProperty(specularMap);
+          EditorGUI.indentLevel += 1;
+          m_MaterialEditor.ShaderProperty(specularSharpness, Styles.specularSharpnessText);
+          EditorGUI.indentLevel -= 1;
+          m_MaterialEditor.ShaderProperty(directionalSHSpecular, Styles.directionSHSpecularText);
+          m_MaterialEditor.ShaderProperty(reflectionSHSpecular, Styles.reflectionSHSpecularText);
+          if (hasAnisotropy)
+              m_MaterialEditor.ShaderProperty(capAnisotropicSpecular, Styles.capAnisotropicSpecularText);
+          EditorGUI.indentLevel -= 1;
+      }
+      else if (specularMap.textureValue != null)
+      {
+          EditorGUI.indentLevel += 1;
+          EditorGUILayout.LabelField(Styles.unusedTextureText, EditorStyles.boldLabel);
+          m_MaterialEditor.TexturePropertySingleLine(Styles.specularColorText, specularMap);
+          EditorGUI.indentLevel -= 1;
+      }
+      if (reflections != null)
+      {
+          m_MaterialEditor.ShaderProperty(reflections, Styles.reflectionsText);
+          if (reflections.floatValue != 0)
+          {
+              EditorGUI.indentLevel += 1;
+              //m_MaterialEditor.TexturePropertySingleLine(Styles.reflectionFallbackText, reflectionFallback);
+              m_MaterialEditor.TextureProperty(reflectionFallback, "Reflection fallback", false);
+              m_MaterialEditor.ShaderProperty(useFallbackInsteadOfProbes, Styles.useFallBackInsteadOfProbesText);
+              EditorGUI.indentLevel -= 1;
+          }
+          else if (reflectionFallback.textureValue != null)
+          {
+              EditorGUI.indentLevel += 1;
+              EditorGUILayout.LabelField(Styles.unusedTextureText, EditorStyles.boldLabel);
+              EditorGUI.indentLevel += 1;
+              m_MaterialEditor.TexturePropertySingleLine(Styles.reflectionFallbackText, reflectionFallback);
+              EditorGUI.indentLevel -= 2;
+          }
       }
       //}
 
@@ -500,12 +540,22 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   }
   void DoCustomHueArea()
   {
-      if (m_HueMagicEnable) {
+      m_MaterialEditor.ShaderProperty(hueEnabled, Styles.hueEnabledText);
+      if (hueEnabled.floatValue != 0) {
+          EditorGUI.indentLevel += 1;
           m_MaterialEditor.TexturePropertySingleLine(Styles.hueMaskText, hueMask);
           if (hueMask.textureValue != null)
               m_MaterialEditor.TextureScaleOffsetProperty(hueMask);
           m_MaterialEditor.ShaderProperty(hueShift, Styles.hueShiftText);
+          m_MaterialEditor.ShaderProperty(hueAddOrSet, Styles.hueAddOrSetText);
           m_MaterialEditor.ShaderProperty(fixedHueShift, Styles.fixedHueShiftText);
+          EditorGUI.indentLevel -= 1;
+      } else if (hueMask.textureValue != null) {
+          EditorGUI.indentLevel += 1;
+          GUILayout.Label(Styles.unusedTextureText, EditorStyles.boldLabel);
+          m_MaterialEditor.TexturePropertySingleLine(Styles.hueMaskText, hueMask);
+          //m_MaterialEditor.TextureProperty(hueMask, "Unused texture", false);
+          EditorGUI.indentLevel -= 1;
       }
   }
   void DoCustomOutlineArea()
@@ -517,13 +567,7 @@ public class EmToon6PBSShaderGUI : ShaderGUI
               m_MaterialEditor.TextureScaleOffsetProperty(outlineMask);
       }
   }
-  void DoCustomReflectionArea()
-  {
-    bool hasFallback = reflectionFallback.textureValue != null;
-    //m_MaterialEditor.TexturePropertySingleLine(new GUIContent("TODO: reflection fallback"), reflectionFallback, hasFallback ? useFallbackInsteadOfProbes : null);
-    m_MaterialEditor.TexturePropertySingleLine(Styles.reflectionFallbackText, reflectionFallback);
-    m_MaterialEditor.ShaderProperty(useFallbackInsteadOfProbes, Styles.useFallBackInsteadOfProbesText);
-  }
+
   void DoCustomDiffuseControlArea()
   {
       m_MaterialEditor.TexturePropertySingleLine(Styles.diffuseControlMapText, diffuseControlMap);
