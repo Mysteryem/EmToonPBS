@@ -339,7 +339,13 @@ half4 frag(
     half3 viewReflectDirection = reflect( -viewDirection, doubleSidedNormals );
     half3 velvetDirection = normalize(doubleSidedNormals-0.5*viewDirection);
     
+    
+#if defined(POINT) || defined(SPOT) || defined(POINT_COOKIE)
+    half3 lightDirection = normalize(UnityWorldSpaceLightDir(i.posWorld.xyz));
+#else
+    // Normalize isn't needed for directional
     half3 lightDirection = UnityWorldSpaceLightDir(i.posWorld.xyz);
+#endif
     half3 halfLightDirection = normalize(lightDirection + viewDirection);
 
     
@@ -387,6 +393,12 @@ half4 frag(
     
     half3 cameraBakedDiffuse = 0;
     half3 lightBakedDiffuse = 0;
+    //half cameraDot = 0;
+    //half lightDot = 0;
+    
+    //half3 vLightColours[6] = {half3(0,1,1),half3(0,1,1),half3(0,1,1),half3(0,1,1),half3(0,1,1),half3(0,1,1)};
+    //half vLightWeights[6] = {0,0,0,0,0,0};
+    //half vLightWeightsTotal = 0;
     
     for (int j = 0; j < 6; j++) {
       
@@ -401,9 +413,28 @@ half4 frag(
       // Light
       half3 vLightShade = ShadeSH9(shadeMul * vLight[j]);
       half vLightDot = saturate(0.5 * (0.5 + dot(doubleSidedNormals, vLight[j])));
+      //if (vLightDot > lightDot) {
+      //  lightDot = vLightDot;
+      //  vLightDot = saturate(SpecialRemap(diffuseSoftness, diffuseWidth, vLightDot));
+      //  lightBakedDiffuse = vLightShade * vLightDot;
+      //}
+      
       vLightDot = saturate(SpecialRemap(diffuseSoftness, diffuseWidth, vLightDot));
+      // Averaging doesn't look good at all, maxLuminance() looks ok when fully sharp but breaks horrible when smooth and min() is always black
       lightBakedDiffuse = max(lightBakedDiffuse, vLightShade * vLightDot);
+      
+      // Tried using vLightDot directly as the weight, but it produces awkward lines noticeable when there is one baked light
+      // Using the 'pre' value as weight gets rid of the nasty lines, but each segment is no longer a flat colour, though the segments are still clear
+      //half vLightDotPre = vLightDot;
+      //vLightDot = saturate(SpecialRemap(diffuseSoftness, diffuseWidth, vLightDot));
+      //vLightColours[j] = vLightShade * vLightDot;
+      //half vLightWeight = 0.5 * vLightDotPre;
+      //vLightWeights[j] = vLightDotPre;
+      //vLightWeightsTotal += vLightDotPre;
     }
+    //for (int vLightIndex = 0; vLightIndex < 6; vLightIndex++) {
+    //  lightBakedDiffuse += (vLightWeights[vLightIndex] / vLightWeightsTotal) * vLightColours[vLightIndex];
+    //}
     
     half3 velvetColour = 1.5*ShadeSH9(velvetDirection);
     
@@ -452,6 +483,7 @@ half4 frag(
     half3 dynamicSideMul3 = half3(0.2,0.2,0.2);
     half dynamicSide[6] = {dynamicSideMul,dynamicSideMul,dynamicSideMul,dynamicSideMul,0,1};
     half3 dynamicLight = attenuation * _LightColor0.rgb;
+
     half dynamicLightDiffuseStrength = 0;
     half dynamicCameraDiffuseStrength = 0;
     
@@ -470,6 +502,7 @@ half4 frag(
     }
     half3 dynamicLightDiffuse = dynamicLightDiffuseStrength * dynamicLight;
     half3 dynamicCameraDiffuse = dynamicCameraDiffuseStrength * dynamicLight;
+
     
     half3 velvetLight = 1.5*dynamicLight * saturate(0.5 * (0.5 + dot(-xiexeLightDir, velvetDirection)));
     
@@ -550,7 +583,7 @@ half4 frag(
     // ------- Diffuse texture
     
     // TODO: Move near the top
-    // Allow using a second texture that is used as light decreases?
+    // TODO?: Allow using a second texture that is used as light decreases?
     //half lowLightTexturePick = saturate(1-pow(max(0,grayscale(finalDiffuseLight)*2-1), 1));
     //fixed4 sampledMainTexture = lerp(UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)), UNITY_SAMPLE_TEX2D_SAMPLER(_LowLightTex,_MainTex, TRANSFORM_TEX(mainUV, _LowLightTex)), lowLightTexturePick);
     fixed4 sampledMainTexture = UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)) * _Color * half4(i.color.rgb, 1);
