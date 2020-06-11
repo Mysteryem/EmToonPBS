@@ -1,6 +1,6 @@
 // TODO: Reuse samplers for textures where possible (ramp should use a sampler set to always clamp)
 // TODO: Detail normals, detail albedo, choosable UV set (may need to change vert function, aren't we out of passable interpolator variables?)
-#include "EmShaderFunctionsToon5.cginc"
+#include "EmShaderLighting.cginc"
 
 uniform fixed4 _Color;
 uniform UNITY_DECLARE_TEX2D(_MainTex);
@@ -53,7 +53,6 @@ uniform fixed _ShReflectionSpecularOn;
 
 uniform samplerCUBE _ReflectionCubemap;
 uniform float4 _ReflectionCubemap_HDR;
-uniform fixed _Usecubemapinsteadofreflectionprobes;
 
 uniform fixed _Anisotropy;
 uniform fixed _Metallic;
@@ -100,10 +99,9 @@ struct VertexOutput {
     float4 color : TEXCOORD5;
     float3 normal : TEXCOORD7;
     float4 screenPos : TEXCOORD8;
-    float3 objPos : TEXCOORD10;
-    float3 vCameraPosX : TEXCOORD11;
-    float3 vCameraPosY : TEXCOORD12;
-    float3 vCameraPosZ : TEXCOORD13;
+    float3 vCameraPosX : TEXCOORD10;
+    float3 vCameraPosY : TEXCOORD11;
+    float3 vCameraPosZ : TEXCOORD12;
     SHADOW_COORDS(6)
     UNITY_FOG_COORDS(9)
 };
@@ -122,10 +120,9 @@ struct VertexOutput {
         float4 color : TEXCOORD6;
         float3 normal : TEXCOORD8;
         float4 screenPos : TEXCOORD9;
-        float3 objPos : TEXCOORD11;
-        float3 vCameraPosX : TEXCOORD12;
-        float3 vCameraPosY : TEXCOORD13;
-        float3 vCameraPosZ : TEXCOORD14;
+        float3 vCameraPosX : TEXCOORD11;
+        float3 vCameraPosY : TEXCOORD12;
+        float3 vCameraPosZ : TEXCOORD13;
         SHADOW_COORDS(7)
         UNITY_FOG_COORDS(10)
     };
@@ -140,10 +137,9 @@ struct VertexOutput {
         float4 posWorld : TEXCOORD4;
         float4 color : TEXCOORD5;
         float4 screenPos : TEXCOORD7;
-        float3 objPos : TEXCOORD9;
-        float3 vCameraPosX : TEXCOORD10;
-        float3 vCameraPosY : TEXCOORD11;
-        float3 vCameraPosZ : TEXCOORD12;
+        float3 vCameraPosX : TEXCOORD9;
+        float3 vCameraPosY : TEXCOORD10;
+        float3 vCameraPosZ : TEXCOORD11;
         SHADOW_COORDS(6)
         UNITY_FOG_COORDS(8)
     };
@@ -165,7 +161,6 @@ VertexOutput vert (VertexData v) {
     //o.tex.uv = v.texcoord0;
     //o.tex.zw = v.texcoord1;
     o.screenPos = ComputeScreenPos(o.pos);
-    o.objPos = normalize(v.vertex);
     o.normal = v.normal;
     o.color = float4(v.color.rgb, 0);
     
@@ -217,7 +212,6 @@ VertexOutput vert (VertexData v) {
             //o.tex.zw = IN[i].uv1;
             o.color = float4(_OutlineColor.rgb, 1); // store if outline in alpha channel of vertex colors | 1 = is an outline
             o.screenPos = ComputeScreenPos(o.pos);
-            o.objPos = normalize(outlinePos);
             o.vCameraPosX = IN[i].vCameraPosX;
             o.vCameraPosY = IN[i].vCameraPosY;
             o.vCameraPosZ = IN[i].vCameraPosZ;
@@ -243,7 +237,6 @@ VertexOutput vert (VertexData v) {
             //o.tex.zw = IN[j].uv1;
             o.color = float4(IN[j].color.rgb,0); // store if outline in alpha channel of vertex colors | 0 = not an outline
             o.screenPos = ComputeScreenPos(o.pos);
-            o.objPos = normalize(IN[j].vertex);
             o.vCameraPosX = IN[j].vCameraPosX;
             o.vCameraPosY = IN[j].vCameraPosY;
             o.vCameraPosZ = IN[j].vCameraPosZ;
@@ -354,8 +347,13 @@ half4 frag(
     half fresnel = 1.0 - inverseFresnel;
     
     // ------- Additional matrix setup
-
+#if defined(UNITY_PASS_FORWARDBASE)
+    // Picks a direction based on a combination of main light (always directional here), vertex lights and Spherical Harmonics
     half3 xiexeLightDir = -calcLightDir(i.posWorld.xyz);
+#else
+    // Add pass does not sample SH or look at vertex lights, only the main light direction of this add pass
+    half3 xiexeLightDir = -lightDirection;
+#endif
     float4x4 lightViewPlaneToWorld = look_at_matrix(0, 0 - xiexeLightDir, half3(1,0,0));
     
     half3 vCameraPosX = i.vCameraPosX;
@@ -364,6 +362,7 @@ half4 frag(
     half3 vCameraNegY = -vCameraPosY;
     half3 vCameraPosZ = i.vCameraPosZ;
     half3 vCameraNegZ = -vCameraPosZ;
+    // The order is only important because we access [5] directly, it could be passed to the functions that use it as a single value and then the order will be irrelevant
     half3 vCamera[6] = {vCameraPosX,vCameraNegX,vCameraPosY,vCameraNegY,vCameraPosZ,vCameraNegZ};
     
     half3 vLightPosX = mul(lightViewPlaneToWorld, half3(1,0,0));
@@ -382,65 +381,18 @@ half4 frag(
     
 
     // ------- Baked diffuse light
-    half3 bakedLightComponent = 0;
-    half3 bakedLightAverageComponent = 0;
 #if defined(UNITY_PASS_FORWARDBASE)
 //#if defined(LIGHTPROBE_SH)
-    bakedLightAverageComponent = ShadeSH9(half4(0,0,0,1));
+    half3 bakedLightAverageComponent = ShadeSH9(half4(0,0,0,1));
 
-    // Softens the lighting and reduces error with baked directional lights
-    half shadeMul = 0.7;
-    
-    half3 cameraBakedDiffuse = 0;
-    half3 lightBakedDiffuse = 0;
-    //half cameraDot = 0;
-    //half lightDot = 0;
-    
-    //half3 vLightColours[6] = {half3(0,1,1),half3(0,1,1),half3(0,1,1),half3(0,1,1),half3(0,1,1),half3(0,1,1)};
-    //half vLightWeights[6] = {0,0,0,0,0,0};
-    //half vLightWeightsTotal = 0;
-    
-    for (int j = 0; j < 6; j++) {
-      
-      //
-      half3 vCameraBakedNormalDir = normalize(doubleSidedNormals + cameraForwardsPull * vCamera[5]);
-      half3 vCameraShade = ShadeSH9(shadeMul * vCamera[j]);
-      half vCameraDot = saturate(0.5 * (0.5 + dot(vCameraBakedNormalDir, vCamera[j])));
-      // TODO? What if instead of the special remap, we instead used a greyscale ramp texture?
-      vCameraDot = saturate(SpecialRemap(diffuseSoftness, cameraDiffuseWidth, vCameraDot));
-      cameraBakedDiffuse = max(cameraBakedDiffuse, vCameraShade * vCameraDot);
-      
-      // Light
-      half3 vLightShade = ShadeSH9(shadeMul * vLight[j]);
-      half vLightDot = saturate(0.5 * (0.5 + dot(doubleSidedNormals, vLight[j])));
-      //if (vLightDot > lightDot) {
-      //  lightDot = vLightDot;
-      //  vLightDot = saturate(SpecialRemap(diffuseSoftness, diffuseWidth, vLightDot));
-      //  lightBakedDiffuse = vLightShade * vLightDot;
-      //}
-      
-      vLightDot = saturate(SpecialRemap(diffuseSoftness, diffuseWidth, vLightDot));
-      // Averaging doesn't look good at all, maxLuminance() looks ok when fully sharp but breaks horrible when smooth and min() is always black
-      lightBakedDiffuse = max(lightBakedDiffuse, vLightShade * vLightDot);
-      
-      // Tried using vLightDot directly as the weight, but it produces awkward lines noticeable when there is one baked light
-      // Using the 'pre' value as weight gets rid of the nasty lines, but each segment is no longer a flat colour, though the segments are still clear
-      //half vLightDotPre = vLightDot;
-      //vLightDot = saturate(SpecialRemap(diffuseSoftness, diffuseWidth, vLightDot));
-      //vLightColours[j] = vLightShade * vLightDot;
-      //half vLightWeight = 0.5 * vLightDotPre;
-      //vLightWeights[j] = vLightDotPre;
-      //vLightWeightsTotal += vLightDotPre;
-    }
-    //for (int vLightIndex = 0; vLightIndex < 6; vLightIndex++) {
-    //  lightBakedDiffuse += (vLightWeights[vLightIndex] / vLightWeightsTotal) * vLightColours[vLightIndex];
-    //}
+    half3 bakedLightComponent = EmSHDiffuse(doubleSidedNormals, cameraForwardsPull, vCamera, vLight, diffuseSoftness, lightOrCamera);
     
     half3 velvetColour = 1.5*ShadeSH9(velvetDirection);
-    
-    bakedLightComponent = lerp(lightBakedDiffuse, cameraBakedDiffuse, lightOrCamera);
     bakedLightComponent = lerp(bakedLightComponent, lerp(bakedLightComponent, max(velvetColour, bakedLightComponent), _ViewDirectionDiffuseBoost), pow(fresnel,4));
-    
+#else
+    // SH lighting is only applied in the base pass
+    half3 bakedLightComponent = 0;
+    half3 bakedLightAverageComponent = 0;
 #endif
     
     // ------- Dynamic diffuse light
@@ -478,35 +430,12 @@ half4 frag(
     
     dynamicLightAverageComponent = attenuationNoShadows * _LightColor0.rgb; 
     
-    
-    half dynamicSideMul = 0.2;
-    half3 dynamicSideMul3 = half3(0.2,0.2,0.2);
-    half dynamicSide[6] = {dynamicSideMul,dynamicSideMul,dynamicSideMul,dynamicSideMul,0,1};
     half3 dynamicLight = attenuation * _LightColor0.rgb;
+    
+    dynamicLightComponent = EmDynamicDiffuse(dynamicLight, lightDirection, doubleSidedNormals, cameraForwardsPull, vCamera, vLight, diffuseSoftness, lightOrCamera);
 
-    half dynamicLightDiffuseStrength = 0;
-    half dynamicCameraDiffuseStrength = 0;
-    
-    half dynamicCameraSideMul[6] = {0.9,0.9,0.9,0.9,0,0.9};
-    
-    for (int k = 0; k < 6; k++) {
-      half vLightDot = saturate(0.5 * (0.5 + dot(doubleSidedNormals, vLight[k])));
-      vLightDot = saturate(SpecialRemap(diffuseSoftness, diffuseWidth, vLightDot));
-      dynamicLightDiffuseStrength = max(dynamicLightDiffuseStrength, dynamicSide[k] * vLightDot);
-      
-      half3 vCameraDynamicNormalDir = normalize(doubleSidedNormals + cameraForwardsPull * vCamera[5]);
-      half vCameraIntensity = dynamicCameraSideMul[k] * 0.9 * (0.1 + dot(lightDirection, vCamera[k]));
-      half vCameraDot = saturate(0.5 * (0.5 + dot(vCameraDynamicNormalDir, vCamera[k])));
-      vCameraDot = saturate(SpecialRemap(diffuseSoftness, cameraDiffuseWidth, vCameraDot));
-      dynamicCameraDiffuseStrength = max(dynamicCameraDiffuseStrength, vCameraIntensity * vCameraDot);
-    }
-    half3 dynamicLightDiffuse = dynamicLightDiffuseStrength * dynamicLight;
-    half3 dynamicCameraDiffuse = dynamicCameraDiffuseStrength * dynamicLight;
-
-    
     half3 velvetLight = 1.5*dynamicLight * saturate(0.5 * (0.5 + dot(-xiexeLightDir, velvetDirection)));
     
-    dynamicLightComponent = lerp(dynamicLightDiffuse, dynamicCameraDiffuse, lightOrCamera);
     dynamicLightComponent = lerp(
       dynamicLightComponent,
       lerp(dynamicLightComponent, max(velvetLight, dynamicLightComponent), _ViewDirectionDiffuseBoost),
@@ -514,28 +443,11 @@ half4 frag(
 //#endif
 
     // ------- Vertex Lights
-    half3 vertexLightComponent = 0;
+    // Should we run vertex lights through the same steps as important lights?
 #if defined(VERTEXLIGHT_ON)
-    for (int index = 0; index < 4; index++) {  
-      float4 lightPosition = float4(unity_4LightPosX0[index], 
-       unity_4LightPosY0[index], 
-       unity_4LightPosZ0[index], 1.0);
-    
-      float3 vertexToLightSource = 
-       lightPosition.xyz - i.posWorld;    
-      float3 lightDirection = normalize(vertexToLightSource);
-      float squaredDistance = 
-       dot(vertexToLightSource, vertexToLightSource);
-      float attenuation = 1.0 / (1.0 + 
-       unity_4LightAtten0[index] * squaredDistance);
-      attenuation = attenuation * attenuation;
-      float3 diffuseReflection = attenuation * unity_LightColor[index].rgb 
-       * max(0.0, dot(i.normalDir, lightDirection) * 0.5 + 0.5);
-       // As we are not using fresnelledNormals, should we run vertex lights through the same steps as important lights?
-       //* max(0.0, dot(fresnelledNormals, lightDirection) * 0.5 + 0.5);     
-    
-      vertexLightComponent = vertexLightComponent + diffuseReflection;
-    }
+    half3 vertexLightComponent = EmVertexLightDiffuse(i.normalDir, i.posWorld.xyz);
+#else
+    half3 vertexLightComponent = 0;
 #endif
 
     half3 finalDiffuseLight = bakedLightComponent + dynamicLightComponent + vertexLightComponent;
@@ -648,18 +560,18 @@ half4 frag(
     half3 anisotropicBentNormal = normalize(lerp(fragmentCommonData.normalWorld, anisotropicRoughnessNormal, abs(glossyEnvironmentData.perceptualRoughnessX - glossyEnvironmentData.perceptualRoughnessY)));
     half3 anisotropicRoughnessReflectionDirection = reflect(fragmentCommonData.eyeVec, anisotropicBentNormal);
     
-    bool noReflectionProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, half3(0,0,0), 0).w == 0;
-    bool useFallbackReflections = _Usecubemapinsteadofreflectionprobes || noReflectionProbe;
     glossyEnvironmentData.reflUVW = lerp(viewReflectDirection, anisotropicRoughnessReflectionDirection, fragmentCommonData.anisotropy);
     
+    // 100 will result in complete blurring, which we will use to assume the overall brightness of the reflection fallback
     half reflectionMipAverage = 100;
-    half reflectionFallbackLuminance = grayscale(texCUBElod(_ReflectionCubemap,float4(glossyEnvironmentData.reflUVW,reflectionMipAverage)).rgb);
     half lightLuminance = grayscale(bakedLightAverageComponent + dynamicLightAverageComponent + vertexLightComponent);
+    // Instead of assuming the fallback reflections are of a fully lit scene, we could try and get the brightness of the fallback and further adjust the fallback brightness to match the surrounding light
+    //half reflectionFallbackLuminance = grayscale(texCUBElod(_ReflectionCubemap,float4(glossyEnvironmentData.reflUVW,reflectionMipAverage)).rgb);
     //half fallbackReflectionAdjust = reflectionFallbackLuminance == 0 ? 0 : lightLuminance/reflectionFallbackLuminance;
     
     glossyEnvironmentData.reflectionFallbackMultiplier = lightLuminance;
 
-    half3 emIndirectSpecular = Em_IndirectSpecular(fragmentCommonData, occlusion, glossyEnvironmentData, _ReflectionCubemap, _ReflectionCubemap_HDR, _Usecubemapinsteadofreflectionprobes);
+    half3 emIndirectSpecular = Em_IndirectSpecular(i.posWorld.xyz, occlusion, glossyEnvironmentData, _ReflectionCubemap, _ReflectionCubemap_HDR);
     #if defined(Geometry)
     if (isOutline) {
           // No reflections on outlines
@@ -671,11 +583,9 @@ half4 frag(
     //BRDF time
     //
     
-    half3 diffuseTerm = dynamicLightComponent;
-    
     
     // ------- Specular
-    // -- Dynamic Light specular
+    // -- Specular setup
     half roughness = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughness);
 #if defined(_SPECULARHIGHLIGHTS_OFF)
     half3 sharedSpecularComponent = 0;
@@ -692,7 +602,7 @@ half4 frag(
     half roughnessY = PerceptualRoughnessToRoughness(glossyEnvironmentData.perceptualRoughnessY);
     fixed4 sampledSpecularColourMap = tex2D(_SpecularMap, TRANSFORM_TEX(mainUV, _SpecularMap));
     // We want a really quick blend from normal style to toon style and to then use the rest of the slider/map value to control how smooth the edges of the toon specular are
-    // We have to be careful not to blend into toon specular right at 0 as the immediate blend between ~95% normal an ~5% toon is horrible, any values near to zero should result in normal specular to account for mipmapping
+    // We have to be careful not to blend into toon specular right at 0 as the immediate blend between ~95% normal and ~5% toon is horrible, any values near to zero should result in normal specular so as to account for poor mipmapping (e.g. a 3x3 texture atlas)
     fixed isToonSpecular = sampledSpecularColourMap.a * _ToonSpecular;
     // [0,0.1) -> 1-0 = 1
     // (0.1,1] -> lerp between 1-0 = 1 and 1-1 = 0
@@ -703,54 +613,12 @@ half4 frag(
     // (0.2,1] -> 100% toon
     isToonSpecular = saturate(10 * isToonSpecular - 1);
     fixed toonSpecularBrightness = sqr(max(fragmentCommonData.smoothnessX, fragmentCommonData.smoothnessY));
+    
+    // -- Dynamic Light specular
   #if defined(POINT) || defined(SPOT) || defined(DIRECTIONAL) || defined(POINT_COOKIE) || defined(DIRECTIONAL_COOKIE) 
     
-    half nDotH = dot(doubleSidedNormals, halfLightDirection);
-    half tDotL = dot(doubleSidedTangent, lightDirection);
-    half bDotL = dot(doubleSidedBitangent, lightDirection);
-    half nDotL = dot(doubleSidedNormals, lightDirection);
-    half tDotH = dot(doubleSidedTangent, halfLightDirection);
-    half bDotH = dot(doubleSidedBitangent, halfLightDirection);
-
-    half halfLightSpecular = GGXNormalDistribution(roughness, saturate(nDotH));
-    
-    
-    half anisotropicSpecularVisibility = SmithJointGGXAnisotropic(tDotV, bDotV, nDotV, tDotL, bDotL, nDotL, roughnessX, roughnessY);
-    anisotropicSpecularVisibility = max(0,anisotropicSpecularVisibility);
-    half anisotropicSpecular = D_GGXAnisotropic(tDotH, bDotH, nDotH, roughnessX, roughnessY);
-
-    anisotropicSpecular *= anisotropicSpecularVisibility;
-
-    #ifdef UNITY_COLORSPACE_GAMMA
-    anisotropicSpecular = sqrt(max(1e-2h, anisotropicSpecular));
-    #endif
-    // Supposedly specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
-    anisotropicSpecular = max(0, anisotropicSpecular * nDotL);
-    // Limit overbrightening on weird normals
-    anisotropicSpecular = lerp(anisotropicSpecular, min(anisotropicSpecular, 2*(anisoSpecLimitSmoothness + grayscale(_LightColor0.rgb * attenuationNoShadows))), _CapAnisoSpecular);
-    
-    halfLightSpecular = lerp(halfLightSpecular, anisotropicSpecular, fragmentCommonData.anisotropy);
-    
-    // TODO: Should this be done before the lerp?
-    halfLightSpecular = halfLightSpecular * saturate(nDotL);
-    
-    half3 dynamicMaterialSpecularInfluence = FresnelTerm(fragmentCommonData.specColor, nDotH);
-
-    half dynamicToonSpecular = toonSpecularBrightness
-                               //the remap gets artifacts when zoomed out when >1
-                               * SpecialRemap(toonSpecularSoftness, 1, saturate(halfLightSpecular))
-                               / Luminance(dynamicMaterialSpecularInfluence);
-    
-    half dynamicSpecularBase = lerp(halfLightSpecular, dynamicToonSpecular, isToonSpecular);
-    
-    half3 dynamicSpecular = _LightColor0.rgb * // Light colour
-                            //attenuationNoShadowLift * // Light attenuation
-                            attenuation * // Light attenuation
-                            dynamicMaterialSpecularInfluence * // Material specular colour influence
-                            dynamicSpecularBase * // Specular intensity
-                            sampledSpecularColourMap.rgb * // Specular map property
-                            _SpecularColour.rgb; // Specular colour property
-    sharedSpecular += max(0, dynamicSpecular);
+    sharedSpecular += EmSpecular(doubleSidedNormals, doubleSidedTangent, doubleSidedBitangent, halfLightDirection, lightDirection, roughness, roughnessX, roughnessY, fragmentCommonData.anisotropy, anisoSpecLimitSmoothness, _CapAnisoSpecular, tDotV, bDotV, nDotV, toonSpecularBrightness, isToonSpecular, toonSpecularSoftness, _LightColor0.rgb * attenuation, _LightColor0.rgb * attenuationNoShadows, fragmentCommonData.specColor);
+    //sharedSpecular += max(0, dynamicSpecular);
   #endif
   #if defined(UNITY_PASS_FORWARDBASE)
     bool shDirectionalSpecularAlwaysOn = _ShDirectionalSpecularOn == 1;
@@ -764,60 +632,25 @@ half4 frag(
     
     // -- SH Dominant Direction Specular
     half3 shLightDir = calcLightDirSH(i.posWorld.xyz);
-    
     bool noSHDirectionalLight = !any(shLightDir);
+    half3 shHalfLightDirection = normalize(shLightDir + viewDirection);
+    half3 shSpecularColour = max(0,ShadeSH9(half4(1*shLightDir, 1))-ShadeSH9(half4(0,0,0,1)));
     
     bool shReflectionSpecularOn = shReflectionSpecularAlwaysOn || (shReflectionSpecularOnIfNoDynamicOrDirectional && noDynamicLight && noSHDirectionalLight);
 
+    half3 shDirectionalSpecular = EmSpecular(doubleSidedNormals, doubleSidedTangent, doubleSidedBitangent, shHalfLightDirection, shLightDir, roughness, roughnessX, roughnessY, fragmentCommonData.anisotropy, anisoSpecLimitSmoothness, _CapAnisoSpecular, tDotV, bDotV, nDotV, toonSpecularBrightness, isToonSpecular, toonSpecularSoftness, shSpecularColour, shSpecularColour, fragmentCommonData.specColor) *
+    shDirectionalSpecularOn;
     
-    half3 shHalfLightDirection = normalize(shLightDir + viewDirection);
-    half nDotSHH = dot(doubleSidedNormals, shHalfLightDirection);
-    half tDotSHH = dot(doubleSidedTangent, shHalfLightDirection);
-    half bDotSHH = dot(doubleSidedBitangent, shHalfLightDirection);
-    half nDotSHL = dot(doubleSidedNormals, shLightDir);
-    half tDotSHL = dot(doubleSidedTangent, shLightDir);
-    half bDotSHL = dot(doubleSidedBitangent, shLightDir);
-    half shHalfLightSpecular = GGXNormalDistribution(roughness, nDotSHH);
-    
-    half anisotropicSHSpecularVisibility = SmithJointGGXAnisotropic(tDotV, bDotV, nDotV, tDotSHL, bDotSHL, nDotSHL, roughnessX, roughnessY);
-    anisotropicSHSpecularVisibility = max(0,anisotropicSHSpecularVisibility);
-    half anisotropicSHSpecular = D_GGXAnisotropic(tDotSHH, bDotSHH, nDotSHH, roughnessX, roughnessY);
+    // -- SH View Direction Specular
+    half3 shSpecularDirection = 0.5*normalize(viewReflectDirection+doubleSidedNormals);
+    // Trial and error to get nice values, it's pretty similar to just doing ShadeSH9 with unchanged normals, though doesn't seem to result in such big issues with directional baked lights
+    half3 sss = max(0,ShadeSH9(half4(shSpecularDirection, 1))-0.4*ShadeSH9(half4(0,0,0,1)));
+    // wondering what it would look like without the second sss term
+    //sss = 8 * sss * sss;
+    sss = 1.5 * sss;
 
-    anisotropicSHSpecular *= anisotropicSHSpecularVisibility;
-    #	ifdef UNITY_COLORSPACE_GAMMA
-    anisotropicSHSpecular = sqrt(max(1e-2h, anisotropicSHSpecular));
-    #	endif
-    // note: was 2*shLightDir
+    half3 bakedSpecColour = max(sss, 0);
     
-    half3 shSpecularColour = max(0,ShadeSH9(half4(1*shLightDir, 1))-ShadeSH9(half4(0,0,0,1)));
-    
-    // Supposedly specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
-    anisotropicSHSpecular = max(0, anisotropicSHSpecular * nDotSHL);
-    // Limit overbrightening on weird normals
-    anisotropicSHSpecular = lerp(anisotropicSHSpecular, min(anisotropicSHSpecular, 2*(anisoSpecLimitSmoothness + grayscale(shSpecularColour))), _CapAnisoSpecular);
-    shHalfLightSpecular = lerp(shHalfLightSpecular, anisotropicSHSpecular, fragmentCommonData.anisotropy);
-    
-    shHalfLightSpecular *= saturate(nDotSHL);
-    
-    half3 shDirectionalMaterialSpecularInfluence = FresnelTerm(fragmentCommonData.specColor, nDotSHH);
-    
-    half shDirectionalToonSpecular = toonSpecularBrightness
-                                     //the remap gets artifacts when zoomed out when >1
-                                     * SpecialRemap(toonSpecularSoftness, 1, saturate(shHalfLightSpecular))
-                                     / Luminance(shDirectionalMaterialSpecularInfluence);
-    
-    half shDirectionalSpecularBase = lerp(shHalfLightSpecular, shDirectionalToonSpecular, isToonSpecular);
-    
-    half3 shDirectionalSpecular = shSpecularColour * // 'Light' colour and attenuation
-                                  shDirectionalMaterialSpecularInfluence * // Material specular colour influence
-                                  shDirectionalSpecularBase * // Specular intensity
-                                  sampledSpecularColourMap.rgb * // Specular map property
-                                  _SpecularColour.rgb * // Specular colour property
-                                  shDirectionalSpecularOn; // Optionally disable sh directional specular
-    
-    // todo: multiply by the specular colour and colour map!!
-    // -- SH Reflect Direction Specular
-    half3 shSpecularDirection = viewReflectDirection;
     //half shSpecularFresnel = saturate(0.77*pow(dot(doubleSidedNormals, normalize(doubleSidedNormals + viewDirection)),1));
     // typically lighting will be coming from above and how this works the lighting is centred around the point in the middle of the screen
     // todo: can anythign be done with view position?
@@ -826,67 +659,14 @@ half4 frag(
     //half3 shReflectDirection = normalize(shSpecularDirectionBoost + lerp(normalize(doubleSidedNormals + viewDirection),viewReflectDirection,shSpecularFresnel));
     half3 shReflectDirection = viewDirection;
     half3 shHalfReflectDirection = normalize(doubleSidedNormals * 0 + viewDirection * 2);
-    half nDotSHRH = dot(doubleSidedNormals, shHalfReflectDirection);
-    half tDotSHRH = dot(doubleSidedTangent, shHalfReflectDirection);
-    half bDotSHRH = dot(doubleSidedBitangent, shHalfReflectDirection);
-    half nDotSHR = dot(doubleSidedNormals, shReflectDirection);
-    half tDotSHR = dot(doubleSidedTangent, shReflectDirection);
-    half bDotSHR = dot(doubleSidedBitangent, shReflectDirection);
+                          
+    half3 bakedSpecular = shReflectionSpecularOn * EmSpecular(doubleSidedNormals, doubleSidedTangent, doubleSidedBitangent, shHalfReflectDirection, shReflectDirection, roughness, roughnessX, roughnessY, fragmentCommonData.anisotropy, anisoSpecLimitSmoothness, _CapAnisoSpecular, tDotV, bDotV, nDotV, toonSpecularBrightness, isToonSpecular, toonSpecularSoftness, bakedSpecColour, bakedSpecColour, fragmentCommonData.specColor);
     
-    half shSpecular = GGXNormalDistribution(roughness, dot(doubleSidedNormals, viewDirection));
-    
-    half anisotropicSHRSpecularVisibility = SmithJointGGXAnisotropic(tDotV, bDotV, nDotV, tDotSHR, bDotSHR, nDotSHR, roughnessX, roughnessY);
-    anisotropicSHRSpecularVisibility = max(0,anisotropicSHRSpecularVisibility);
-    half anisotropicSHRSpecular = D_GGXAnisotropic(tDotSHRH, bDotSHRH, nDotSHRH, roughnessX, roughnessY);
-    anisotropicSHRSpecular *= anisotropicSHRSpecularVisibility;
-    
-    #	ifdef UNITY_COLORSPACE_GAMMA
-    anisotropicSHRSpecular = sqrt(max(1e-2h, anisotropicSHRSpecular));
-    #	endif
-    // Trial and error to get nice values, it's pretty similar to just doing ShadeSH9 with unchanged normals, though doesn't seem to result in such big issues with directional baked lights
-    half3 sss = max(0,ShadeSH9(half4(0.5*normalize(shSpecularDirection+doubleSidedNormals), 1))-0.4*ShadeSH9(half4(0,0,0,1)));
-    // wondering what it would look like without the second sss term
-    //sss = 8 * sss * sss;
-    sss = 1.5 * sss;
-
-    half3 bakedSpecColour = max(sss, 0);
-
-    // Supposedly specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
-    anisotropicSHRSpecular = max(0, anisotropicSHRSpecular * nDotSHR);
-    // Limit overbrightening on weird normals
-    anisotropicSHRSpecular = lerp(anisotropicSHRSpecular, min(anisotropicSHRSpecular, 2 * (anisoSpecLimitSmoothness + grayscale(bakedSpecColour))), _CapAnisoSpecular);
-
-    shSpecular = lerp(shSpecular, anisotropicSHRSpecular, fragmentCommonData.anisotropy);
-   
-    // Should this be used?
-    // 0.1 at 0.7 smoothness
-    // 0.5 at 0.3 smoothness
-    shSpecular = shSpecular * saturate(dot(doubleSidedNormals, viewDirection));
-    //shSpecular = shSpecular * saturate(nDotSHR);
-    
-    
-    half3 shReflectMaterialSpecularInfluence = FresnelTerm(fragmentCommonData.specColor, nDotSHR);
-    
-    half shToonSpecular = toonSpecularBrightness
-                          //the remap gets artifacts when zoomed out when >1
-                          * SpecialRemap(toonSpecularSoftness, 1, saturate(shSpecular))
-                          / Luminance(shReflectMaterialSpecularInfluence);
-    
-    half shSpecularBase = lerp(shSpecular, shToonSpecular, isToonSpecular);
-    
-    half3 bakedSpecular = bakedSpecColour * // 'Light' colour and attenuation
-                          shReflectMaterialSpecularInfluence * // Material specular colour influence
-                          shSpecularBase * // Specular intensity
-                          sampledSpecularColourMap.rgb * // Specular map property
-                          _SpecularColour.rgb * // Specular colour property
-                          shReflectionSpecularOn; // Optionally disable sh reflect specular
-    
-    //half bakedShDirectionLerp = saturate(pow(2*max(0,nDotSHL+0.5),1));
-    
+    // Both of these specular options are using the same light source, they should not add together
     sharedSpecular += max(0,max(bakedSpecular, shDirectionalSpecular));
     
   #endif
-    half3 sharedSpecularComponent = sharedSpecular;
+    half3 sharedSpecularComponent = sharedSpecular * sampledSpecularColourMap.rgb * _SpecularColour.rgb;
 #endif
     
     
@@ -898,7 +678,9 @@ half4 frag(
     }
 #endif
     //end specular
-     
+    
+    // Surface reduction from standard:
+    
     // surfaceReduction = Int D(NdotH) * NdotH * Id(NdotL>0) dH = 1/(roughness^2+1)
     half surfaceReduction;
 #   ifdef UNITY_COLORSPACE_GAMMA
@@ -916,13 +698,13 @@ half4 frag(
 
    
     half3 finalDiffuse = fragmentCommonData.diffColor * finalDiffuseLight;
+    
     // Removes indirect lighting from reflection probes in nearly unlit to completely unlit environments
     #if defined(UNITY_PASS_FORWARDBASE)
-    _LightColor0.rgb;
-    // baked light seems way off?
+    // FIXME: baked light seems waaaay off
     half indirectSpecularModifier = saturate(grayscale((bakedLightAverageComponent*100 + (vertexLightComponent + dynamicLightAverageComponent) * 10)));
     #else
-    // There isn't any indirect specular anyway since we're in a forwardadd pass, but maybe this will let the compiler be even more aggressive with removing unneeded code
+    // There isn't any indirect specular anyway since we're in a forwardadd pass, but this should let the compiler be even more aggressive with removing unneeded code
     half indirectSpecularModifier = 0;
     #endif
     half3 finalColor = finalDiffuse * occlusion * 1
@@ -951,7 +733,7 @@ half4 frag(
     //half4 debugValue = half4(debugValue3, 1);
     //return max(0, half4(finalColor,1) * 0.001 - 1) + 1 - lightAttenuation.shadow;
     //return max(0, half4(finalColor,1) * 0.001 - 1) + newShadows;
-    //return max(0, half4(finalColor,1) * 0.001 - 1) + grazingTerm;
+    //return max(0, half4(finalColor,1) * 0.001 - 12) + grayscale(albedoComponent);
     //#else
 #if defined(_ALPHABLEND_ON) || defined(_ALPHAPREMULTIPLY_ON)
     return half4(finalColor,outputAlpha);

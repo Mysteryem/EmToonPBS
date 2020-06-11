@@ -1,3 +1,5 @@
+//todo: Why is the include order important here?
+#include "EmShaderFunctionsToon5.cginc"
 #include "AutoLight.cginc"
 //todo: Split into EmShaderDefines (remember to ifdef i
 #if defined(SHADER_API_D3D11) || defined(SHADER_API_XBOXONE)
@@ -81,6 +83,7 @@ half3 getVertexLightsDir(float3 worldPos)
 // Get the most intense light Dir from probes OR from a light source. Method developed by Xiexe / Merlin
 half3 calcLightDir(float3 worldPos)
 {   
+    // Note that is not normalized for point or spot lights
     half3 lightDir = UnityWorldSpaceLightDir(worldPos);
 
     half3 probeLightDir = unity_SHAr.xyz + unity_SHAg.xyz + unity_SHAb.xyz;
@@ -156,6 +159,138 @@ half3 BetterSH9 (half4 normal) {
 
 }
 
-half3 ShadeSH9(half3 vec) {
+inline half3 ShadeSH9(half3 vec) {
   return ShadeSH9(half4(vec, 1));
+}
+
+half3 EmVertexLightDiffuse(half3 normalDir, float3 posWorld) {
+  half3 vertexLightComponent = 0;
+  for (int index = 0; index < 4; index++) {  
+    float3 lightPosition = float3(unity_4LightPosX0[index], unity_4LightPosY0[index], unity_4LightPosZ0[index]);
+  
+    float3 vertexToLightSource = lightPosition.xyz - posWorld;    
+    float3 lightDirection = normalize(vertexToLightSource);
+    float squaredDistance = dot(vertexToLightSource, vertexToLightSource);
+    float attenuation = 1.0 / (1.0 + unity_4LightAtten0[index] * squaredDistance);
+    attenuation = attenuation * attenuation;
+    float3 diffuseReflection = attenuation * unity_LightColor[index].rgb * max(0.0, dot(normalDir, lightDirection) * 0.5 + 0.5);
+  
+    vertexLightComponent = vertexLightComponent + diffuseReflection;
+  }
+  return vertexLightComponent;
+}
+
+half3 EmSHDiffuse(half3 doubleSidedNormals, half cameraForwardsPull, half3 vCamera[6], half3 vLight[6], half diffuseSoftness, half lightOrCamera) {
+    // Softens the lighting and reduces error with baked directional lights
+    const half shadeMul = 0.7;
+    
+    // Magic values to ensure full coverage of all possible input normals and reduce overlap
+    //  - Overlap creates more areas of different colour when using sharp diffuse...and the areas typically end up having less aetheticly pleasing shapes
+    //  - Not having full coverage of all possible input normals will result in black areas appearing
+    const half diffuseWidth = 2;
+    const half cameraDiffuseWidth = 1;
+    
+    half3 cameraBakedDiffuse = 0;
+    half3 lightBakedDiffuse = 0;
+    
+    for (int j = 0; j < 6; j++) {
+      
+      // vCamera[5] is the negative Z Camera direction which is the normal going from the object position and towards the camera, this pulls the normal towards the camera (if the normal had been at the object origin)
+      half3 vCameraBakedNormalDir = normalize(doubleSidedNormals + cameraForwardsPull * vCamera[5]);
+      half3 vCameraShade = ShadeSH9(shadeMul * vCamera[j]);
+      half vCameraDot = saturate(0.5 * (0.5 + dot(vCameraBakedNormalDir, vCamera[j])));
+      // TODO? What if instead of the special remap, we instead used a greyscale ramp texture?
+      vCameraDot = saturate(SpecialRemap(diffuseSoftness, cameraDiffuseWidth, vCameraDot));
+      cameraBakedDiffuse = max(cameraBakedDiffuse, vCameraShade * vCameraDot);
+      
+      // Light
+      half3 vLightShade = ShadeSH9(shadeMul * vLight[j]);
+      half vLightDot = saturate(0.5 * (0.5 + dot(doubleSidedNormals, vLight[j])));
+      
+      vLightDot = saturate(SpecialRemap(diffuseSoftness, diffuseWidth, vLightDot));
+      // Averaging doesn't look good at all, maxLuminance() looks ok when fully sharp but breaks horrible when smooth and min() is always black
+      lightBakedDiffuse = max(lightBakedDiffuse, vLightShade * vLightDot);
+    }
+    
+    return lerp(lightBakedDiffuse, cameraBakedDiffuse, lightOrCamera);
+}
+
+half3 EmDynamicDiffuse(half3 dynamicLight, half3 lightDirection, half3 doubleSidedNormals, half cameraForwardsPull, half3 vCamera[6], half3 vLight[6], half diffuseSoftness, half lightOrCamera) {
+  // Magic values to ensure full coverage of all possible input normals and reduce overlap
+  //  - Overlap creates more areas of different colour when using sharp diffuse...and the areas typically end up having less aetheticly pleasing shapes
+  //  - Not having full coverage of all possible input normals will results in black areas appearing
+  const half diffuseWidth = 2;
+  const half cameraDiffuseWidth = 1;
+  
+  // Just helps not having to type it all out
+  const half dynamicSideMul = 0.2;
+  const half3 dynamicSideMul3 = half3(0.2,0.2,0.2);
+  
+  half dynamicSide[6] = {dynamicSideMul,dynamicSideMul,dynamicSideMul,dynamicSideMul,0,1};
+
+  half dynamicLightDiffuseStrength = 0;
+  half dynamicCameraDiffuseStrength = 0;
+  
+  half dynamicCameraSideMul[6] = {0.9,0.9,0.9,0.9,0,0.9};
+  
+  for (int k = 0; k < 6; k++) {
+    half vLightDot = saturate(0.5 * (0.5 + dot(doubleSidedNormals, vLight[k])));
+    vLightDot = saturate(SpecialRemap(diffuseSoftness, diffuseWidth, vLightDot));
+    dynamicLightDiffuseStrength = max(dynamicLightDiffuseStrength, dynamicSide[k] * vLightDot);
+    
+    half3 vCameraDynamicNormalDir = normalize(doubleSidedNormals + cameraForwardsPull * vCamera[5]);
+    half vCameraIntensity = dynamicCameraSideMul[k] * 0.9 * (0.1 + dot(lightDirection, vCamera[k]));
+    half vCameraDot = saturate(0.5 * (0.5 + dot(vCameraDynamicNormalDir, vCamera[k])));
+    vCameraDot = saturate(SpecialRemap(diffuseSoftness, cameraDiffuseWidth, vCameraDot));
+    dynamicCameraDiffuseStrength = max(dynamicCameraDiffuseStrength, vCameraIntensity * vCameraDot);
+  }
+  
+  return dynamicLight * lerp(dynamicLightDiffuseStrength, dynamicCameraDiffuseStrength, lightOrCamera);
+}
+
+// Good god this is a mess, a Struct for common variables used between all 3 specular function calls would be nice
+half3 EmSpecular(half3 doubleSidedNormals, half3 doubleSidedTangent, half3 doubleSidedBitangent, half3 halfLightDirection, half3 lightDirection, half roughness, half roughnessX, half roughnessY, half anisotropy, half anisoSpecLimitSmoothness, fixed capAnisoSpecular, half tDotV, half bDotV, half nDotV, fixed toonSpecularBrightness, fixed isToonSpecular, fixed toonSpecularSoftness, half3 lightColourAndAttenuation, half3 lightColourAndAttenuationNoShadows, half3 specularColour) {
+    half nDotH = dot(doubleSidedNormals, halfLightDirection);
+    half tDotL = dot(doubleSidedTangent, lightDirection);
+    half bDotL = dot(doubleSidedBitangent, lightDirection);
+    half nDotL = dot(doubleSidedNormals, lightDirection);
+    half tDotH = dot(doubleSidedTangent, halfLightDirection);
+    half bDotH = dot(doubleSidedBitangent, halfLightDirection);
+
+    half halfLightSpecular = GGXNormalDistribution(roughness, saturate(nDotH));
+    
+    
+    half anisotropicSpecularVisibility = SmithJointGGXAnisotropic(tDotV, bDotV, nDotV, tDotL, bDotL, nDotL, roughnessX, roughnessY);
+    anisotropicSpecularVisibility = max(0,anisotropicSpecularVisibility);
+    half anisotropicSpecular = D_GGXAnisotropic(tDotH, bDotH, nDotH, roughnessX, roughnessY);
+
+    anisotropicSpecular *= anisotropicSpecularVisibility;
+
+    #ifdef UNITY_COLORSPACE_GAMMA
+    anisotropicSpecular = sqrt(max(1e-2h, anisotropicSpecular));
+    #endif
+    // Supposedly specularTerm * nl can be NaN on Metal in some cases, use max() to make sure it's a sane value
+    anisotropicSpecular = max(0, anisotropicSpecular * nDotL);
+    // Limit overbrightening on weird normals
+    anisotropicSpecular = lerp(anisotropicSpecular, min(anisotropicSpecular, 2*(anisoSpecLimitSmoothness + grayscale(lightColourAndAttenuationNoShadows))), capAnisoSpecular);
+    
+    halfLightSpecular = lerp(halfLightSpecular, anisotropicSpecular, anisotropy);
+    
+    // TODO: Should this be done before the lerp?
+    halfLightSpecular = halfLightSpecular * saturate(nDotL);
+    
+    half3 dynamicMaterialSpecularInfluence = FresnelTerm(specularColour, nDotH);
+
+    half dynamicToonSpecular = toonSpecularBrightness
+                               //the remap gets artifacts when zoomed out when >1
+                               * SpecialRemap(toonSpecularSoftness, 1, saturate(halfLightSpecular))
+                               / Luminance(dynamicMaterialSpecularInfluence);
+    
+    half dynamicSpecularBase = lerp(halfLightSpecular, dynamicToonSpecular, isToonSpecular);
+    
+    half3 dynamicSpecular = lightColourAndAttenuation * // Light colour and attenuation
+                            dynamicMaterialSpecularInfluence * // Material specular colour influence
+                            dynamicSpecularBase; // Specular intensity
+    
+    return max(0,dynamicSpecular);
 }

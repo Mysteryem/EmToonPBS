@@ -38,7 +38,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
         [Enum(Off,0,On,1,If no directional or dynamic,2)] _ShReflectionSpecularOn ("Approximate Baked Specular", Int) = 1
         //_NormalMap ("DEPRECIATED_Normal Map", 2D) = "bump" {}
         //_NormalMapStrength ("DEPRECIATED_Normal Map Strength", Float ) = 1
-        _BumpMap ("Normal Map", 2D) = "bump" {}
+        [Normal]_BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Map Strength", Float ) = 1
         
         _OcclusionMap("Occlusion Strength (G)", 2D) = "white" {}
@@ -48,7 +48,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
         
         _DetailAlbedoMap("Detail Albedo x2", 2D) = "grey" {}
         _DetailNormalMapScale("Scale", Float) = 1.0
-        _DetailNormalMap("Normal Map", 2D) = "bump" {}
+        [Normal]_DetailNormalMap("Normal Map", 2D) = "bump" {}
         
         [Enum(UV0,0,UV1,1)] _UVSec ("UV Set for secondary textures", Float) = 0
         
@@ -56,7 +56,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
         [HDR]_Emission ("DEPRECIATED Emission", Color) = (0,0,0,1)
         [HDR]_EmissionColor ("Emission", Color) = (0,0,0,1)
         _ReflectionCubemap ("Reflection Cubemap (fallback)", Cube) = "_Skybox" {}
-        [Enum(Off,0,On,1)] _Usecubemapinsteadofreflectionprobes ("Use fallback instead of probes", Int) = 0
+        [Toggle(_SUNDISK_HIGH_QUALITY)] _Usecubemapinsteadofreflectionprobes ("Use fallback instead of probes", Float) = 0.0
         
         _HueMask ("Hue Mask", 2D) = "white" {}
         // There isn't that much point to hue shift, since the same effect can be achieved by changing the hue of the albdeo/emission textures, if four other hue properties are used by the shader, this one should be discarded
@@ -118,6 +118,8 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
             #pragma shader_feature _ _GLOSSYREFLECTIONS_OFF
             // Using this keyword to enable/disable HMD_HUE
             #pragma shader_feature _ _PARALLAXMAP
+            // Using this keyword to enable/disable FALLBACK_REPLACE_PROBES
+            #pragma shader_feature _ _SUNDISK_HIGH_QUALITY
             
             #pragma vertex vert
             #pragma fragment frag
@@ -148,6 +150,11 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
                     #define HMD_HUE
                 #endif
             #endif
+            #ifdef _SUNDISK_HIGH_QUALITY
+                #ifndef FALLBACK_REPLACE_PROBES
+                    #define FALLBACK_REPLACE_PROBES
+                #endif
+            #endif
             
             #include "EmToon6PBS_Core.cginc"
             
@@ -175,6 +182,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
             #pragma shader_feature _ _SPECULARHIGHLIGHTS_OFF
             // Using this keyword to enable/disable HMD_HUE
             #pragma shader_feature _ _PARALLAXMAP
+            // There is no need for a separate shader_feature for using fallback reflectionprobes as we do not use reflections in the add pass
             
             #pragma vertex vert
             #pragma fragment frag

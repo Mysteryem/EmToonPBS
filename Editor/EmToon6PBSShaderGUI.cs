@@ -322,7 +322,7 @@ public class EmToon6PBSShaderGUI : ShaderGUI
               DoCustomOutlineArea();
           EditorGUILayout.Space();
           
-          if (m_DetailFoldout = EditorGUILayout.Foldout(m_DetailFoldout, "Detail (NYI)", true)) {
+          if (m_DetailFoldout = EditorGUILayout.Foldout(m_DetailFoldout, "Detail (Not Yet Implemented)", true)) {
               // Detail mask
               m_MaterialEditor.TexturePropertySingleLine(Styles.detailMaskText, detailMask);
               if (detailMask.textureValue != null)

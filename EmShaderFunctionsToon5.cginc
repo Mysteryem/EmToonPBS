@@ -1,5 +1,4 @@
 #include "UnityStandardUtils.cginc"
-#include "EmShaderLighting.cginc"
 #include "UnityPBSLighting.cginc"
 #include "UnityCG.cginc"
 
@@ -36,12 +35,7 @@ half GGXNormalDistribution(half roughness, half NdotH) {
 // Taken from https://cedec.cesa.or.jp/2015/session/ENG/14698.html
 float SmithJointGGXAnisotropic(float TdotV, float BdotV, float NdotV, float TdotL, float BdotL, float NdotL, float roughnessX, float roughnessY)
 {
-  //TdotV = abs(TdotV);
-  //BdotV = abs(BdotV);
-  //NdotV = abs(NdotV);
-  //TdotL = abs(TdotL);
-  //BdotL = abs(BdotL);
-  //NdotL = abs(NdotL);
+  // A value of zero breaks
 	float aT = max(0.000001, roughnessX);
 	float aT2 = aT * aT;
 	float aB = max(0.000001, roughnessY);
@@ -53,9 +47,6 @@ float SmithJointGGXAnisotropic(float TdotV, float BdotV, float NdotV, float Tdot
 	
   float visibility = saturate(0.5 / (lambdaV + lambdaL));
   
-  float cap = 25 *
-  (max(1-RoughnessToPerceptualRoughness(roughnessX), 1-RoughnessToPerceptualRoughness(roughnessY)));
-  //return min(cap, visibility);
   return visibility;
 }
 
@@ -67,26 +58,12 @@ float absMax(float maxAbs, float f) {
 // From HDRenderPipeline
 float D_GGXAnisotropic(float TdotH, float BdotH, float NdotH, float roughnessT, float roughnessB)
 {
-  //TdotH = abs(TdotH);
-  //BdotH = abs(BdotH);
-  //NdotH = abs(NdotH);
-  //TdotH = saturate(TdotH);
-  //BdotH = saturate(BdotH);
-  //NdotH = saturate(NdotH);
-  //float testMax = 0;
-  //BdotH = absMax(testMax, BdotH);
-  //TdotH = absMax(testMax, TdotH);
-  //NdotH = absMax(testMax, NdotH);
   roughnessT = max(0.000001, roughnessT);
   roughnessB = max(0.000001, roughnessB);
-  //roughnessT = 1;
-  //roughnessB = 1;
+  
 	float f = TdotH * TdotH / (roughnessT * roughnessT) + BdotH * BdotH / (roughnessB * roughnessB) + NdotH * NdotH;
 	float aniso = 1.0 / (roughnessT * roughnessB * f * f);
-  // Prevents overbrightening with weird normals (f -> 0)
-  float brightnessCap = 25 *
-  (max(1-RoughnessToPerceptualRoughness(roughnessB), 1-RoughnessToPerceptualRoughness(roughnessT)));
-  //return min(brightnessCap, aniso);
+
   return aniso;
 }
 
@@ -189,13 +166,18 @@ half3 getReflectionUV(half3 direction, half3 position, half4 cubemapPosition, ha
     return direction;
 }
 
-inline half3 Em_IndirectSpecular(FragmentCommonDataPlus data, half occlusion, GlossyEnvironmentDataPlus glossIn, samplerCUBE ReflectionCubemap, float4 ReflectionCubemap_HDR, bool Usecubemapinsteadofreflectionprobes) {
+inline half3 Em_IndirectSpecular(float3 posWorld, half occlusion, GlossyEnvironmentDataPlus glossIn, samplerCUBE ReflectionCubemap, float4 ReflectionCubemap_HDR) {
     #if defined(UNITY_PASS_FORWARDBASE)
         #if defined(_GLOSSYREFLECTIONS_OFF)
             half3 specular = unity_IndirectSpecColor.rgb;
         #else
+            #if defined(FALLBACK_REPLACE_PROBES)
+            bool useFallbackReflections = true;
+            #else
             bool noReflectionProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, half3(0,0,0), 0).w == 0;
-            bool useFallbackReflections = Usecubemapinsteadofreflectionprobes || noReflectionProbe;
+            
+            bool useFallbackReflections = noReflectionProbe;
+            #endif
         
             half3 R = glossIn.reflUVW;
             half perceptualRoughness = min(glossIn.perceptualRoughnessX, glossIn.perceptualRoughnessY);
@@ -208,18 +190,17 @@ inline half3 Em_IndirectSpecular(FragmentCommonDataPlus data, half occlusion, Gl
             
             half3 env0Fallback = glossIn.reflectionFallbackMultiplier * DecodeHDR(texCUBElod(ReflectionCubemap, half4(R, mip)), ReflectionCubemap_HDR);
             
-            half3 R1 = getReflectionUV(R, data.posWorld, unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin, unity_SpecCube0_BoxMax);
+            half3 R1 = getReflectionUV(R, posWorld, unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin, unity_SpecCube0_BoxMax);
             half4 env0Probe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, R1, mip);
             half3 env0 = useFallbackReflections ? env0Fallback : DecodeHDR(env0Probe, unity_SpecCube0_HDR);
-            // Maybe instead we could use a shaderfeature and then "#undef UNITY_SPECCUBE_BLENDING"? Not sure if it's worth it.
-            float blendLerp = useFallbackReflections ? 0 : unity_SpecCube0_BoxMin.w;
-            #if UNITY_SPECCUBE_BLENDING
+
+            #if UNITY_SPECCUBE_BLENDING && !defined(FALLBACK_REPLACE_PROBES)
                 const float kBlendFactor = 0.99999;
-                blendLerp = unity_SpecCube0_BoxMin.w;
+                float blendLerp = unity_SpecCube0_BoxMin.w;
                 UNITY_BRANCH
                 if (blendLerp < kBlendFactor || true)
                 {
-                    half3 R2 = getReflectionUV(R, data.posWorld, unity_SpecCube1_ProbePosition, unity_SpecCube1_BoxMin, unity_SpecCube1_BoxMax);
+                    half3 R2 = getReflectionUV(R, posWorld, unity_SpecCube1_ProbePosition, unity_SpecCube1_BoxMin, unity_SpecCube1_BoxMax);
 
                     half4 env1Probe = UNITY_SAMPLE_TEXCUBE_SAMPLER_LOD(unity_SpecCube1, unity_SpecCube0, R2, mip);
                     half3 env1 = DecodeHDR(env1Probe, unity_SpecCube1_HDR);
@@ -230,7 +211,7 @@ inline half3 Em_IndirectSpecular(FragmentCommonDataPlus data, half occlusion, Gl
                     specular = env0;
                 }
             #else
-                //specular = env0;
+                specular = env0;
             #endif
         #endif
         
