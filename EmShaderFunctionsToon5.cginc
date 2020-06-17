@@ -2,6 +2,7 @@
 #include "UnityPBSLighting.cginc"
 #include "UnityCG.cginc"
 
+//TODO: Remove since we're not passing this struct around any more
 struct FragmentCommonDataPlus {
     half3 diffColor, specColor;
     half oneMinusReflectivity, smoothnessX, smoothnessY, anisotropy;
@@ -48,10 +49,6 @@ float SmithJointGGXAnisotropic(float TdotV, float BdotV, float NdotV, float Tdot
   float visibility = saturate(0.5 / (lambdaV + lambdaL));
   
   return visibility;
-}
-
-float absMax(float maxAbs, float f) {
-  return max(maxAbs, abs(f)) * sign(f);
 }
 
 // Anisotropic GGX
@@ -111,28 +108,6 @@ float3 RGBtoHSV(in float3 RGB)
   return float3(HCV.x, S, HCV.z);
 }
 
-float4x4 axis_matrix(float3 right, float3 up, float3 forward)
-{
-    float3 xaxis = right;
-    float3 yaxis = up;
-    float3 zaxis = forward;
-    return float4x4(
-		xaxis.x, yaxis.x, zaxis.x, 0,
-		xaxis.y, yaxis.y, zaxis.y, 0,
-		xaxis.z, yaxis.z, zaxis.z, 0,
-		0, 0, 0, 1
-	);
-}
-
-// http://stackoverflow.com/questions/349050/calculating-a-lookat-matrix
-float4x4 look_at_matrix(float3 at, float3 eye, float3 up)
-{
-    float3 zaxis = normalize(at - eye);
-    float3 xaxis = normalize(cross(up, zaxis));
-    float3 yaxis = cross(zaxis, xaxis);
-    return axis_matrix(xaxis, yaxis, zaxis);
-}
-
 float GTR2_aniso(float NdotH, float HdotX, float HdotY, float ax, float ay)
 {
     return 1 / (UNITY_PI * ax*ay * sqr( sqr(HdotX/ax) + sqr(HdotY/ay) + NdotH*NdotH ));
@@ -151,72 +126,3 @@ float cibbiAnisoSpec(float NdotH, float HdotX, float HdotY, float NdotV, float V
   return max(0, aniso * NdotL);
 }
 
-// From xiexe's xstoon
-//Reflection direction, worldPos, unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin, unity_SpecCube0_BoxMax
-half3 getReflectionUV(half3 direction, half3 position, half4 cubemapPosition, half3 boxMin, half3 boxMax) 
-{
-    #if UNITY_SPECCUBE_BOX_PROJECTION
-    UNITY_BRANCH
-    if (cubemapPosition.w > 0) {
-        half3 factors = ((direction > 0 ? boxMax : boxMin) - position) / direction;
-        half scalar = min(min(factors.x, factors.y), factors.z);
-        direction = direction * scalar + (position - cubemapPosition);
-    }
-    #endif
-    return direction;
-}
-
-inline half3 Em_IndirectSpecular(float3 posWorld, half occlusion, GlossyEnvironmentDataPlus glossIn, samplerCUBE ReflectionCubemap, float4 ReflectionCubemap_HDR) {
-    #if defined(UNITY_PASS_FORWARDBASE)
-        #if defined(_GLOSSYREFLECTIONS_OFF)
-            half3 specular = unity_IndirectSpecColor.rgb;
-        #else
-            #if defined(FALLBACK_REPLACE_PROBES)
-            bool useFallbackReflections = true;
-            #else
-            bool noReflectionProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, half3(0,0,0), 0).w == 0;
-            
-            bool useFallbackReflections = noReflectionProbe;
-            #endif
-        
-            half3 R = glossIn.reflUVW;
-            half perceptualRoughness = min(glossIn.perceptualRoughnessX, glossIn.perceptualRoughnessY);
-        
-            perceptualRoughness *= 1.7 - 0.7 * perceptualRoughness;
-        
-            half mip = perceptualRoughnessToMipmapLevel(perceptualRoughness);
-            
-            half3 specular;
-            
-            half3 env0Fallback = glossIn.reflectionFallbackMultiplier * DecodeHDR(texCUBElod(ReflectionCubemap, half4(R, mip)), ReflectionCubemap_HDR);
-            
-            half3 R1 = getReflectionUV(R, posWorld, unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin, unity_SpecCube0_BoxMax);
-            half4 env0Probe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, R1, mip);
-            half3 env0 = useFallbackReflections ? env0Fallback : DecodeHDR(env0Probe, unity_SpecCube0_HDR);
-
-            #if UNITY_SPECCUBE_BLENDING && !defined(FALLBACK_REPLACE_PROBES)
-                const float kBlendFactor = 0.99999;
-                float blendLerp = unity_SpecCube0_BoxMin.w;
-                UNITY_BRANCH
-                if (blendLerp < kBlendFactor || true)
-                {
-                    half3 R2 = getReflectionUV(R, posWorld, unity_SpecCube1_ProbePosition, unity_SpecCube1_BoxMin, unity_SpecCube1_BoxMax);
-
-                    half4 env1Probe = UNITY_SAMPLE_TEXCUBE_SAMPLER_LOD(unity_SpecCube1, unity_SpecCube0, R2, mip);
-                    half3 env1 = DecodeHDR(env1Probe, unity_SpecCube1_HDR);
-                    specular = lerp(env1, env0, blendLerp);
-                }
-                else
-                {
-                    specular = env0;
-                }
-            #else
-                specular = env0;
-            #endif
-        #endif
-        
-        return specular * occlusion;
-    #else
-        return half3(0,0,0);
-    #endif
-}

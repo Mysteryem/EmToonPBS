@@ -1,4 +1,4 @@
-Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
+Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
     Properties {
         [Enum(Off,0,Front,1,Back,2)] _Culling ("Culling Mode", Int) = 2
         _Color ("Color", Color) = (1,1,1,1)
@@ -47,32 +47,16 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
         [Normal]_DetailNormalMap("Normal Map", 2D) = "bump" {}
         
         [Enum(UV0,0,UV1,1)] _UVSec ("UV Set for secondary textures", Float) = 0
-
-
+        
         _EmissionMap ("Emission Map", 2D) = "white" {}
         [HDR]_EmissionColor ("Emission", Color) = (0,0,0,1)
         _ReflectionCubemap ("Reflection Cubemap (fallback)", Cube) = "_Skybox" {}
         [Toggle(_SUNDISK_HIGH_QUALITY)] _Usecubemapinsteadofreflectionprobes ("Use fallback instead of probes", Float) = 0.0
-        
         _HueMask ("Hue Mask", 2D) = "white" {}
-        // There isn't that much point to hue shift, since the same effect can be achieved by changing the hue of the albdeo/emission textures, if four other hue properties are used by the shader, this one should be discarded
         _HueShift ("Hue Shift", Range(0,1)) = 0
         [Enum(Add,0,Set,1)] _HueAddOrSet ("Add Or Set Hue", Range(0.0, 1.0)) = 1.0
         // Same as above, there's not much point having a fixed hue shift, since the albedo/emission textures can just be changed instead
         [Enum(Camera based,0,Fixed,1)] _FixedHueShift ("Fixed Hue Shift", Int) = 0
-        [HDR]_OutlineColor("Outline Color", Color) = (0,0,0,1)
-        _OutlineWidth("Outline Width", Range(0, 5)) = 0.1
-        
-
-        _OutlineAlbedoTint("Outline Albedo Tint", Range(0,1)) = 1
-        _OutlineLit("Lit Outlines", Range(0,1)) = 1
-        
-
-        //r = width
-        //g = albedo blend ('tint' aka 'multiply')
-        //b = emissive or lit
-        //TODO?: a = decrease width with camera closeness?
-        _OutlineMask("Outline Mask", 2D) = "white" {}
         
         // Forward rendering options
         [ToggleOff] _SpecularHighlights("Specular Highlights", Float) = 1.0
@@ -89,7 +73,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
     }
     SubShader {
         Tags {
-            "RenderType"="Opaque" "Queue"="Geometry" "PerformanceChecks"="False"
+            "RenderType"="Opaque" "Queue"="Geometry"
         }
         Cull [_Culling]
         PASS {
@@ -97,12 +81,11 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
             Tags {
                 "LightMode"="ForwardBase"
             }
-            
             Blend [_SrcBlend] [_DstBlend]
             ZWrite [_ZWrite]
           
             CGPROGRAM
-            #define Geometry
+            //#define Geometry
             
             #pragma target 3.0
             
@@ -118,7 +101,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
             
             #pragma vertex vert
             #pragma fragment frag
-            #pragma geometry geom
+            //#pragma geometry geom
             
             // Testing/WIP
             //#pragma multi_compile _ VERTEXLIGHT_ON
@@ -141,7 +124,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
                 #define UNITY_PASS_FORWARDBASE
             #endif
             
-            #include "EmToon6PBS_Core.cginc"
+            #include "EmToonPBS-0.6_Core.cginc"
             
             ENDCG
         }
@@ -157,8 +140,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
             ZTest LEqual
             
             CGPROGRAM
-            #define Geometry
-            
+            //#define Geometry
             #pragma target 3.0
             
             #pragma shader_feature _NORMALMAP
@@ -171,7 +153,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
             
             #pragma vertex vert
             #pragma fragment frag
-            #pragma geometry geom
+            //#pragma geometry geom
             //#pragma multi_compile_fwdadd_fullshadows
             #pragma multi_compile_fog
             #pragma multi_compile_fwdadd_fullshadows
@@ -182,7 +164,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
                  #define UNITY_PASS_FORWARDADD
             #endif
             
-            #include "EmToon6PBS_Core.cginc"
+            #include "EmToonPBS-0.6_Core.cginc"
             
             ENDCG
         }

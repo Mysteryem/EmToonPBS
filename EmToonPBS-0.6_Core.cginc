@@ -102,9 +102,6 @@ struct VertexOutput {
     float4 color : TEXCOORD5;
     float3 normal : TEXCOORD7;
     float4 screenPos : TEXCOORD8;
-    float3 vCameraPosX : TEXCOORD10;
-    float3 vCameraPosY : TEXCOORD11;
-    float3 vCameraPosZ : TEXCOORD12;
     SHADOW_COORDS(6)
     UNITY_FOG_COORDS(9)
 };
@@ -123,9 +120,6 @@ struct VertexOutput {
         float4 color : TEXCOORD6;
         float3 normal : TEXCOORD8;
         float4 screenPos : TEXCOORD9;
-        float3 vCameraPosX : TEXCOORD11;
-        float3 vCameraPosY : TEXCOORD12;
-        float3 vCameraPosZ : TEXCOORD13;
         SHADOW_COORDS(7)
         UNITY_FOG_COORDS(10)
     };
@@ -140,9 +134,6 @@ struct VertexOutput {
         float4 posWorld : TEXCOORD4;
         float4 color : TEXCOORD5;
         float4 screenPos : TEXCOORD7;
-        float3 vCameraPosX : TEXCOORD9;
-        float3 vCameraPosY : TEXCOORD10;
-        float3 vCameraPosZ : TEXCOORD11;
         SHADOW_COORDS(6)
         UNITY_FOG_COORDS(8)
     };
@@ -166,19 +157,6 @@ VertexOutput vert (VertexData v) {
     o.screenPos = ComputeScreenPos(o.pos);
     o.normal = v.normal;
     o.color = float4(v.color.rgb, 0);
-    
-#if defined(USING_STEREO_MATRICES)
-    float3 cameraPos = lerp(unity_StereoWorldSpaceCameraPos[0], unity_StereoWorldSpaceCameraPos[1], 0.5);
-#else
-    float3 cameraPos = _WorldSpaceCameraPos;
-#endif
-    float3 objectPosition = mul(unity_ObjectToWorld, float4(0,0,0,1)).xyz;
-    half3 objectViewDirection = normalize(cameraPos - objectPosition);
-    float4x4 cameraViewPlaneToWorld = look_at_matrix(objectPosition, cameraPos, cross(objectViewDirection, half3(0,1,0)));
-
-    o.vCameraPosX = mul(cameraViewPlaneToWorld, half3(1,0,0));
-    o.vCameraPosY = mul(cameraViewPlaneToWorld, half3(0,1,0));
-    o.vCameraPosZ = mul(cameraViewPlaneToWorld, half3(0,0,1));
 
     UNITY_TRANSFER_SHADOW(o, o.uv);
     UNITY_TRANSFER_FOG(o, o.pos);
@@ -215,9 +193,6 @@ VertexOutput vert (VertexData v) {
             //o.tex.zw = IN[i].uv1;
             o.color = float4(IN[i].color.rgb * _OutlineColor.rgb, 1); // store if outline in alpha channel of vertex colors | 1 = is an outline
             o.screenPos = ComputeScreenPos(o.pos);
-            o.vCameraPosX = IN[i].vCameraPosX;
-            o.vCameraPosY = IN[i].vCameraPosY;
-            o.vCameraPosZ = IN[i].vCameraPosZ;
         
             #if defined (SHADOWS_SCREEN) || ( defined (SHADOWS_DEPTH) && defined (SPOT) ) || defined (SHADOWS_CUBE)
                 o._ShadowCoord = IN[i]._ShadowCoord; //Can't use TRANSFER_SHADOW() macro here
@@ -240,9 +215,6 @@ VertexOutput vert (VertexData v) {
             //o.tex.zw = IN[j].uv1;
             o.color = float4(IN[j].color.rgb,0); // store if outline in alpha channel of vertex colors | 0 = not an outline
             o.screenPos = ComputeScreenPos(o.pos);
-            o.vCameraPosX = IN[j].vCameraPosX;
-            o.vCameraPosY = IN[j].vCameraPosY;
-            o.vCameraPosZ = IN[j].vCameraPosZ;
         
             #if defined (SHADOWS_SCREEN) || ( defined (SHADOWS_DEPTH) && defined (SPOT) ) || defined (SHADOWS_CUBE)
                 o._ShadowCoord = IN[j]._ShadowCoord; //Can't use TRANSFER_SHADOW() or UNITY_TRANSFER_SHADOW() macros here, could use custom versions of them
@@ -358,7 +330,31 @@ half4 frag(
     half inverseFresnel = max(0, dot(doubleSidedNormals, viewDirection)); 
     half fresnel = 1.0 - inverseFresnel;
     
-    // ------- Additional matrix setup
+    // ------- Lighting setup
+    
+    // Object view directions
+#if defined(USING_STEREO_MATRICES)
+    float3 cameraPos = lerp(unity_StereoWorldSpaceCameraPos[0], unity_StereoWorldSpaceCameraPos[1], 0.5);
+#else
+    float3 cameraPos = _WorldSpaceCameraPos;
+#endif
+    float3 objectPosition = mul(unity_ObjectToWorld, float4(0,0,0,1)).xyz;
+    half3 objectViewDirection = normalize(objectPosition - cameraPos);
+    
+    // Thought about using camera up direction, but then when players rotate their head, the lighting would all move around which I think looks bad. With this 'up' direction, the lighting remains in place unless looking from directly up or down from the object origin at which point, the lighting spins around 
+    half3 cameraUpDirection = normalize(cross(objectViewDirection, half3(0,1,0)));
+    half3 cameraLeftDirection = normalize(cross(objectViewDirection, cameraUpDirection));
+    
+    half3 vCameraPosX = cameraLeftDirection;
+    half3 vCameraNegX = -vCameraPosX;
+    half3 vCameraPosY = cameraUpDirection;
+    half3 vCameraNegY = -vCameraPosY;
+    half3 vCameraPosZ = objectViewDirection;
+    half3 vCameraNegZ = -vCameraPosZ;
+    // The order is only important because we access [5] directly, but it could be passed to the functions that use it as a single value and then the order will be irrelevant
+    half3 vCamera[6] = {vCameraPosX,vCameraNegX,vCameraPosY,vCameraNegY,vCameraPosZ,vCameraNegZ};
+
+    // Lighting directions
 #if defined(UNITY_PASS_FORWARDBASE)
     // Picks a direction based on a combination of main light (always directional here), vertex lights and Spherical Harmonics
     half3 xiexeLightDir = -calcLightDir(i.posWorld.xyz);
@@ -366,22 +362,14 @@ half4 frag(
     // Add pass does not sample SH or look at vertex lights, only the main light direction of this add pass
     half3 xiexeLightDir = -lightDirection;
 #endif
-    float4x4 lightViewPlaneToWorld = look_at_matrix(0, 0 - xiexeLightDir, half3(1,0,0));
+    half3 lightUpDirection = normalize(cross(xiexeLightDir, half3(1,0,0)));
+    half3 lightLeftDirection = normalize(cross(xiexeLightDir, lightUpDirection));
     
-    half3 vCameraPosX = i.vCameraPosX;
-    half3 vCameraNegX = -vCameraPosX;
-    half3 vCameraPosY = i.vCameraPosY;
-    half3 vCameraNegY = -vCameraPosY;
-    half3 vCameraPosZ = i.vCameraPosZ;
-    half3 vCameraNegZ = -vCameraPosZ;
-    // The order is only important because we access [5] directly, it could be passed to the functions that use it as a single value and then the order will be irrelevant
-    half3 vCamera[6] = {vCameraPosX,vCameraNegX,vCameraPosY,vCameraNegY,vCameraPosZ,vCameraNegZ};
-    
-    half3 vLightPosX = mul(lightViewPlaneToWorld, half3(1,0,0));
+    half3 vLightPosX = lightLeftDirection;
     half3 vLightNegX = -vLightPosX;
-    half3 vLightPosY = mul(lightViewPlaneToWorld, half3(0,1,0));
+    half3 vLightPosY = lightUpDirection;
     half3 vLightNegY = -vLightPosY;
-    half3 vLightPosZ = mul(lightViewPlaneToWorld, half3(0,0,1));
+    half3 vLightPosZ = xiexeLightDir;
     half3 vLightNegZ = -vLightPosZ;
     half3 vLight[6] = {vLightPosX,vLightNegX,vLightPosY,vLightNegY,vLightPosZ,vLightNegZ};
     
@@ -764,7 +752,7 @@ half4 frag(
     ////#if defined(UNITY_PASS_FORWARDBASE)
     //////sharedSpecular += max(0,dynamicSpecular * saturate(nDotL));
     //half4 debugValue = half4(debugValue3, 1);
-    //return max(0, half4(finalColor,1) * 0.001 - 1) + 1 - lightAttenuation.shadow;
+    //return max(0, half4(finalColor,1) * 0.001 - 1) + dot(doubleSidedNormals, i.vCameraPosX);
     
     
     //return max(0, half4(finalColor,1) * 0.001 - 12) + grayscale(albedoComponent);

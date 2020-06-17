@@ -294,3 +294,73 @@ half3 EmSpecular(half3 doubleSidedNormals, half3 doubleSidedTangent, half3 doubl
     
     return max(0,dynamicSpecular);
 }
+
+// From xiexe's xstoon
+//Reflection direction, worldPos, unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin, unity_SpecCube0_BoxMax
+half3 getReflectionUV(half3 direction, half3 position, half4 cubemapPosition, half3 boxMin, half3 boxMax) 
+{
+    #if UNITY_SPECCUBE_BOX_PROJECTION
+    UNITY_BRANCH
+    if (cubemapPosition.w > 0) {
+        half3 factors = ((direction > 0 ? boxMax : boxMin) - position) / direction;
+        half scalar = min(min(factors.x, factors.y), factors.z);
+        direction = direction * scalar + (position - cubemapPosition);
+    }
+    #endif
+    return direction;
+}
+
+inline half3 Em_IndirectSpecular(float3 posWorld, half occlusion, GlossyEnvironmentDataPlus glossIn, samplerCUBE ReflectionCubemap, float4 ReflectionCubemap_HDR) {
+    #if defined(UNITY_PASS_FORWARDBASE)
+        #if defined(_GLOSSYREFLECTIONS_OFF)
+            half3 specular = unity_IndirectSpecColor.rgb;
+        #else
+            #if defined(FALLBACK_REPLACE_PROBES)
+            bool useFallbackReflections = true;
+            #else
+            bool noReflectionProbe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, half3(0,0,0), 0).w == 0;
+            
+            bool useFallbackReflections = noReflectionProbe;
+            #endif
+        
+            half3 R = glossIn.reflUVW;
+            half perceptualRoughness = min(glossIn.perceptualRoughnessX, glossIn.perceptualRoughnessY);
+        
+            perceptualRoughness *= 1.7 - 0.7 * perceptualRoughness;
+        
+            half mip = perceptualRoughnessToMipmapLevel(perceptualRoughness);
+            
+            half3 specular;
+            
+            half3 env0Fallback = glossIn.reflectionFallbackMultiplier * DecodeHDR(texCUBElod(ReflectionCubemap, half4(R, mip)), ReflectionCubemap_HDR);
+            
+            half3 R1 = getReflectionUV(R, posWorld, unity_SpecCube0_ProbePosition, unity_SpecCube0_BoxMin, unity_SpecCube0_BoxMax);
+            half4 env0Probe = UNITY_SAMPLE_TEXCUBE_LOD(unity_SpecCube0, R1, mip);
+            half3 env0 = useFallbackReflections ? env0Fallback : DecodeHDR(env0Probe, unity_SpecCube0_HDR);
+
+            #if UNITY_SPECCUBE_BLENDING && !defined(FALLBACK_REPLACE_PROBES)
+                const float kBlendFactor = 0.99999;
+                float blendLerp = unity_SpecCube0_BoxMin.w;
+                UNITY_BRANCH
+                if (blendLerp < kBlendFactor || true)
+                {
+                    half3 R2 = getReflectionUV(R, posWorld, unity_SpecCube1_ProbePosition, unity_SpecCube1_BoxMin, unity_SpecCube1_BoxMax);
+
+                    half4 env1Probe = UNITY_SAMPLE_TEXCUBE_SAMPLER_LOD(unity_SpecCube1, unity_SpecCube0, R2, mip);
+                    half3 env1 = DecodeHDR(env1Probe, unity_SpecCube1_HDR);
+                    specular = lerp(env1, env0, blendLerp);
+                }
+                else
+                {
+                    specular = env0;
+                }
+            #else
+                specular = env0;
+            #endif
+        #endif
+        
+        return specular * occlusion;
+    #else
+        return half3(0,0,0);
+    #endif
+}
