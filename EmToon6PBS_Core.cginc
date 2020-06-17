@@ -1,5 +1,6 @@
 // TODO: Reuse samplers for textures where possible (ramp should use a sampler set to always clamp)
 // TODO: Detail normals, detail albedo, choosable UV set (may need to change vert function, aren't we out of passable interpolator variables?)
+#include "EmShaderFeatures.cginc"
 #include "EmShaderLighting.cginc"
 
 uniform fixed4 _Color;
@@ -73,6 +74,8 @@ uniform half4 _OutlineColor;
 uniform half _OutlineWidth;
 uniform UNITY_DECLARE_TEX2D(_OutlineMask);
 uniform float4 _OutlineMask_ST;
+uniform half _OutlineAlbedoTint;
+uniform half _OutlineLit;
 #endif
 
 struct VertexData {
@@ -210,7 +213,7 @@ VertexOutput vert (VertexData v) {
             o.tex = float4(IN[i].uv0, IN[i].uv1);
             //o.tex.uv = IN[i].uv0;
             //o.tex.zw = IN[i].uv1;
-            o.color = float4(_OutlineColor.rgb, 1); // store if outline in alpha channel of vertex colors | 1 = is an outline
+            o.color = float4(IN[i].color.rgb * _OutlineColor.rgb, 1); // store if outline in alpha channel of vertex colors | 1 = is an outline
             o.screenPos = ComputeScreenPos(o.pos);
             o.vCameraPosX = IN[i].vCameraPosX;
             o.vCameraPosY = IN[i].vCameraPosY;
@@ -286,6 +289,15 @@ half4 frag(
     half occlusion = LerpOneTo(sampledOcclusion.g, _OcclusionStrength);
     half UNUSED_b = sampledOcclusion.b;
     half UNUSED_a = sampledOcclusion.a;
+
+#if defined(Geometry)
+    half4 sampledOutlineMask = UNITY_SAMPLE_TEX2D_SAMPLER(_OutlineMask, _MainTex, TRANSFORM_TEX(mainUV, _OutlineMask));
+    // red is outline width which is used in the geometry function
+    half outlineAlbedoMultiplied = sampledOutlineMask.g * _OutlineAlbedoTint;
+    half outlineLit = sampledOutlineMask.b * _OutlineLit;
+    // alpha is currently unused, but perhaps it could be used to control whether outlines decrease in width when the camera gets close? (would be used in the geometry function and not here)
+#endif
+
     
     fixed4 sampledDiffuseControl = UNITY_SAMPLE_TEX2D_SAMPLER(_DiffuseControlMap, _MainTex, TRANSFORM_TEX(mainUV, _DiffuseControlMap));
     
@@ -474,21 +486,21 @@ half4 frag(
 #endif 
     
     // ------- Emission
-    half3 emissive = 0;
+    half4 emissive = 0;
 #if defined(UNITY_PASS_FORWARDBASE)
     fixed4 sampledEmissionTexture = UNITY_SAMPLE_TEX2D_SAMPLER(_EmissionMap,_MainTex, TRANSFORM_TEX(mainUV, _EmissionMap));
-    emissive = (sampledEmissionTexture.rgb * _EmissionColor.rgb);
+    emissive = (sampledEmissionTexture * _EmissionColor);
     
 #if defined(HMD_HUE)    
-    node_3045_p = lerp(float4(float4(emissive,0.0).zy, node_3045_k.wz), float4(float4(emissive,0.0).yz, node_3045_k.xy), step(float4(emissive,0.0).z, float4(emissive,0.0).y));
-    node_3045_q = lerp(float4(node_3045_p.xyw, float4(emissive,0.0).x), float4(float4(emissive,0.0).x, node_3045_p.yzx), step(node_3045_p.x, float4(emissive,0.0).x));
+    node_3045_p = lerp(float4(emissive.zy, node_3045_k.wz), float4(emissive.yz, node_3045_k.xy), step(emissive.z, emissive.y));
+    node_3045_q = lerp(float4(node_3045_p.xyw, emissive.x), float4(emissive.x, node_3045_p.yzx), step(node_3045_p.x, emissive.x));
     node_3045_d = node_3045_q.x - min(node_3045_q.w, node_3045_q.y);
     
     colorInHSV = float3(abs(node_3045_q.z + (node_3045_q.w - node_3045_q.y) / (6.0 * node_3045_d + node_3045_e)), node_3045_d / (node_3045_q.x + node_3045_e), node_3045_q.x);
     half initialEmissiveHue = lerp(colorInHSV.r, 0, _HueAddOrSet);
     node_1294 = (lerp(float3(1,1,1),saturate(3.0*abs(1.0-2.0*frac((initialEmissiveHue+hueOffset+node_4111)+float3(0.0,-1.0/3.0,1.0/3.0)))-1),colorInHSV.g)*colorInHSV.b);
                 
-    emissive = lerp(emissive,node_1294,hueMask);
+    emissive.rgb = lerp(emissive.rgb,node_1294,hueMask);
 #endif
 #endif
     
@@ -499,6 +511,11 @@ half4 frag(
     //half lowLightTexturePick = saturate(1-pow(max(0,grayscale(finalDiffuseLight)*2-1), 1));
     //fixed4 sampledMainTexture = lerp(UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)), UNITY_SAMPLE_TEX2D_SAMPLER(_LowLightTex,_MainTex, TRANSFORM_TEX(mainUV, _LowLightTex)), lowLightTexturePick);
     fixed4 sampledMainTexture = UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)) * _Color * half4(i.color.rgb, 1);
+#if defined(Geometry)
+    if(isOutline) {
+        sampledMainTexture = lerp(half4(i.color.rgb, 1), sampledMainTexture, outlineAlbedoMultiplied);
+    }
+#endif
 
 #if defined(_ALPHATEST_ON)
     clip(sampledMainTexture.a - _Cutoff);
@@ -517,7 +534,7 @@ half4 frag(
                 
     sampledMainTexture = lerp(sampledMainTexture, fixed4(node_1294,sampledMainTexture.a), hueMask);
 #endif
-    
+
     fixed3 albedoComponent = lerp((sampledMainTexture), grayscale(sampledMainTexture.rgb), (-1 * (_SaturationAdjustment)));
 
     // -------- Direct and Indirect specular
@@ -707,10 +724,26 @@ half4 frag(
     // There isn't any indirect specular anyway since we're in a forwardadd pass, but this should let the compiler be even more aggressive with removing unneeded code
     half indirectSpecularModifier = 0;
     #endif
-    half3 finalColor = finalDiffuse * occlusion * 1
-                       + sharedSpecularComponent * specularKill * 1
+    half3 finalColor = finalDiffuse * occlusion
+                       + sharedSpecularComponent * specularKill
                        + surfaceReduction * emIndirectSpecular * indirectSpecularFresnelLerp * indirectSpecularModifier;
-    finalColor = max(finalColor, emissive);
+    
+    // Same as below when no Geometry #define
+    finalColor = lerp(finalColor + emissive, max(finalColor, emissive), emissive.a);
+#if defined(Geometry)
+    if (isOutline) {
+        // specular (direct and indirect) is already removed for outlines, so it's just diffuse, occlusion and emission 
+        // unlit outlines are just albedo colour (affected by outline colour for outlines) and occlusion
+        #if defined(UNITY_PASS_FORWARDBASE)
+            half3 unlitOutlineColour = albedoComponent;
+        #else
+            // They're unlit, don't add it again for each forward add pass
+            half3 unlitOutlineColour = 0;
+        #endif
+            finalColor = lerp(unlitOutlineColour, finalColor, outlineLit); 
+    }
+#endif
+
     
     //DEBUG
     //half debugValue1 = GGXNormalDistribution(roughness, saturate(nDotH));
@@ -732,7 +765,8 @@ half4 frag(
     //////sharedSpecular += max(0,dynamicSpecular * saturate(nDotL));
     //half4 debugValue = half4(debugValue3, 1);
     //return max(0, half4(finalColor,1) * 0.001 - 1) + 1 - lightAttenuation.shadow;
-    //return max(0, half4(finalColor,1) * 0.001 - 1) + newShadows;
+    
+    
     //return max(0, half4(finalColor,1) * 0.001 - 12) + grayscale(albedoComponent);
     //#else
 #if defined(_ALPHABLEND_ON) || defined(_ALPHAPREMULTIPLY_ON)

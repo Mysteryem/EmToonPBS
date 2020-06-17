@@ -53,6 +53,7 @@ public class EmToon6PBSShaderGUI : ShaderGUI
     // Custom Styles
     public static GUIContent cullingModeText = new GUIContent("Culling Mode", "Culling Mode");
     public static GUIContent hueEnabledText = new GUIContent("Hue Change Effect", "Enable the Hue Change Effect, applies to Albedo and Emission");
+    public static GUIContent hueEnabledTextOutlines = new GUIContent("Hue Change Effect", "Enable the Hue Change Effect, applies to Albedo, Emission and Outlines");
     public static GUIContent hueAddOrSetText = new GUIContent("Hue Add Or Set", "Add to the existing hue (0) or ignore the existing hue and set the new hue directly (1). Values between 0 and 1 are not advised");
     public static GUIContent hueMaskText = new GUIContent("Hue Mask", "Hue Mask (Description TODO)");
     public static GUIContent hueShiftText = new GUIContent("Hue Offset", "Offset the hue shift");
@@ -68,7 +69,9 @@ public class EmToon6PBSShaderGUI : ShaderGUI
     public static GUIContent reflectionSHSpecularText = new GUIContent("SH Reflection Specular", "Enable specular highlights from Spherical Harmonics based on the view reflection direction");
     public static GUIContent capAnisotropicSpecularText = new GUIContent("Cap Anisotropic Specular", "Particularly bad vertex normals can cause severely bright specular highlights with the currently used anisotropic specular function, turning this on will limit the maximum brightness to fairly sane levels, turn this on if you are using anisotropic specular and get blinded by the specular highlights in worlds with bloom enabled (though you should probably look into fixing the vertex normals on your model)");
     public static GUIContent outlineWidthText = new GUIContent("Outline Width");
-    public static GUIContent outlineWidthMaskText = new GUIContent("Outline Mask", "Multiplied by the slider value. Colouring works similar to Cubed's FlatLitToon whereby the outlines are diffuse lit (diffuse lights * albedo). Note that specular highlights and reflections are excluded from outlines.");
+    public static GUIContent outlineAlbedoTintText = new GUIContent("Outline Albedo Tint", "0: Vertex colour and outline colour only, 1: Multiplied by albedo colour and texture");
+    public static GUIContent outlineLitText = new GUIContent("Lit Outlines", "0: Unlit, 1: Diffuse Lit");
+    public static GUIContent outlineWidthMaskText = new GUIContent("Outline Mask", "Width (R), Albedo Tint (G), Lit (B). Note that specular highlights and reflections are excluded from lit outlines.");
     public static GUIContent reflectionFallbackText = new GUIContent("Reflection Fallback", "Specify a cubemap to use as a fallback when a world has no reflection probes. The fallback should be well lit as it will be adjusted in brightness to match the environment");
     public static GUIContent useFallBackInsteadOfProbesText = new GUIContent("Replace Probes", "Use the specified fallback instead of using reflection probes from the world");
     public static GUIContent diffuseControlMapText = new GUIContent("Diffuse Control", "Diffuse Smoothness (R), Diffuse Direction (G), View Direction Forwards Bias (B), **Velvet Boost** (A)");
@@ -81,7 +84,7 @@ public class EmToon6PBSShaderGUI : ShaderGUI
     public static GUIContent viewDirectionForwardsBiasText = new GUIContent("View Direction Forwards Bias", "Decreases the width of the rimlight-like effect when using the view direction Diffuse Direction. Technically, this adds a bias towards the direction going towards the camera.");
     public static GUIContent shadowSharpnessText = new GUIContent("Shadow Sharpness", "Dynamic shadow sharpness. Works similarly to XSToon");
     public static GUIContent shadowLiftText = new GUIContent("Shadow Lift", "Dynamic shadow lift. Decreases the strength of dynamic shadows. A small amount, ~0.1, is helpful for very poorly lit worlds that have a single dynamic directional light with full strength shadows");
-    public static GUIContent emissionMapText = new GUIContent("Emission");
+    public static GUIContent emissionMapText = new GUIContent("Emission", "Alpha 0: Additive blending (avatar_lighting + emission)\nAlpha 100: Lighten blending (max(avatar_lighting, emission))");
     public static GUIContent unusedTextureText = new GUIContent("!!! Unused texture !!!");
     
   }
@@ -109,6 +112,8 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   MaterialProperty outlineColor = null;
   MaterialProperty outlineWidth = null;
   MaterialProperty outlineMask = null;
+  MaterialProperty outlineAlbedoTint = null;
+  MaterialProperty outlineLit = null;
   
   // Custom - Advanced Options
   //MaterialProperty uvSetPrimary = null;
@@ -204,6 +209,8 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   if (m_OutlineEnable) {
       outlineColor = FindProperty("_OutlineColor", props);
       outlineMask = FindProperty("_OutlineMask", props);
+      outlineAlbedoTint = FindProperty("_OutlineAlbedoTint", props);
+      outlineLit = FindProperty("_OutlineLit", props);
   }
   
   // Custom - Advanced Options
@@ -540,7 +547,7 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   }
   void DoCustomHueArea()
   {
-      m_MaterialEditor.ShaderProperty(hueEnabled, Styles.hueEnabledText);
+      m_MaterialEditor.ShaderProperty(hueEnabled, m_OutlineEnable ? Styles.hueEnabledTextOutlines : Styles.hueEnabledText);
       if (hueEnabled.floatValue != 0) {
           EditorGUI.indentLevel += 1;
           m_MaterialEditor.TexturePropertySingleLine(Styles.hueMaskText, hueMask);
@@ -562,6 +569,8 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   {
       if (m_OutlineEnable) {
           m_MaterialEditor.ShaderProperty(outlineWidth, Styles.outlineWidthText);
+          m_MaterialEditor.ShaderProperty(outlineAlbedoTint, Styles.outlineAlbedoTintText);
+          m_MaterialEditor.ShaderProperty(outlineLit, Styles.outlineLitText);
           m_MaterialEditor.TexturePropertySingleLine(Styles.outlineWidthMaskText, outlineMask, outlineColor);
           if (outlineMask.textureValue != null)
               m_MaterialEditor.TextureScaleOffsetProperty(outlineMask);
@@ -588,7 +597,7 @@ public class EmToon6PBSShaderGUI : ShaderGUI
   {
       bool hadEmissionTexture = emissionMap.textureValue != null;
     
-      m_MaterialEditor.TexturePropertyWithHDRColor(Styles.emissionMapText, emissionMap, emissionColor, m_ColorPickerHDRConfig, false);
+      m_MaterialEditor.TexturePropertySingleLine(Styles.emissionMapText, emissionMap, emissionColor);
       if (emissionMap.textureValue != null)
           m_MaterialEditor.TextureScaleOffsetProperty(emissionMap);
       

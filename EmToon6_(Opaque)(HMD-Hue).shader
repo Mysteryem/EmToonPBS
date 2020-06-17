@@ -11,12 +11,9 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
         [Gamma] _Metallic ("Metallic (Metallic red)", Range(0.0,1.0)) = 0
         
         _Glossiness ("Smoothness/Smoothness X (Metallic alpha)", Range(0,1)) = 0.5
-        
-        // New
+
         _SmoothnessY ("Smoothness Y (Metallic green)", Range(0,1)) = 0.5
-        // New
         _Anisotropy ("Anisotropy (Metallic blue)", Range(0,1)) = 0
-        // New
         [Enum(Off,0,On,1)] _CapAnisoSpecular ("Cap Anisotropic Specular (leave off unless weird normals on your model cause overbrightening)", Float) = 0
         //_GlossMapScale("Smoothness Scale", Range(0.0, 1.0)) = 1.0
         // TODO
@@ -36,8 +33,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
         _SpecularMap ("Specular Colour Map", 2D) = "white" {}
         [Enum(Off,0,On,1,If no dynamic,2)] _ShDirectionalSpecularOn ("Directional Baked Specular", Int) = 1
         [Enum(Off,0,On,1,If no directional or dynamic,2)] _ShReflectionSpecularOn ("Approximate Baked Specular", Int) = 1
-        //_NormalMap ("DEPRECIATED_Normal Map", 2D) = "bump" {}
-        //_NormalMapStrength ("DEPRECIATED_Normal Map Strength", Float ) = 1
+
         [Normal]_BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Map Strength", Float ) = 1
         
@@ -53,7 +49,6 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
         [Enum(UV0,0,UV1,1)] _UVSec ("UV Set for secondary textures", Float) = 0
         
         _EmissionMap ("Emission Map", 2D) = "white" {}
-        [HDR]_Emission ("DEPRECIATED Emission", Color) = (0,0,0,1)
         [HDR]_EmissionColor ("Emission", Color) = (0,0,0,1)
         _ReflectionCubemap ("Reflection Cubemap (fallback)", Cube) = "_Skybox" {}
         [Toggle(_SUNDISK_HIGH_QUALITY)] _Usecubemapinsteadofreflectionprobes ("Use fallback instead of probes", Float) = 0.0
@@ -128,16 +123,6 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
             #ifndef UNITY_PASS_FORWARDBASE
                 #define UNITY_PASS_FORWARDBASE
             #endif
-            #ifdef _PARALLAXMAP
-                #ifndef HMD_HUE
-                    #define HMD_HUE
-                #endif
-            #endif
-            #ifdef _SUNDISK_HIGH_QUALITY
-                #ifndef FALLBACK_REPLACE_PROBES
-                    #define FALLBACK_REPLACE_PROBES
-                #endif
-            #endif
             
             #include "EmToon6PBS_Core.cginc"
             
@@ -177,11 +162,6 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
             
             #ifndef UNITY_PASS_FORWARDADD
                  #define UNITY_PASS_FORWARDADD
-            #endif
-            #ifdef _PARALLAXMAP
-                #ifndef HMD_HUE
-                    #define HMD_HUE
-                #endif
             #endif
             
             #include "EmToon6PBS_Core.cginc"
