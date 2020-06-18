@@ -1,5 +1,5 @@
 //todo: Why is the include order important here?
-#include "EmShaderFunctionsToon5.cginc"
+#include "EmShaderFunctions.cginc"
 #include "AutoLight.cginc"
 //todo: Split into EmShaderDefines (remember to ifdef i
 #if defined(SHADER_API_D3D11) || defined(SHADER_API_XBOXONE)
@@ -56,6 +56,64 @@ struct Attenuation {
     destNameS.light = tex2D(_LightTexture0, lightCoordS).w; \
     destNameS.shadow = UNITY_SHADOW_ATTENUATION(input, worldPos);
 #endif
+
+//TODO: Remove since we're not passing this struct around any more
+struct FragmentCommonDataPlus {
+    half3 diffColor, specColor;
+    half oneMinusReflectivity, smoothnessX, smoothnessY, anisotropy;
+    float3 normalWorld, tangentWorld, bitangentWorld;
+    float3 eyeVec;
+    half alpha;
+    float3 posWorld;
+};
+
+struct GlossyEnvironmentDataPlus {
+    half perceptualRoughness,perceptualRoughnessX, perceptualRoughnessY;
+    half3 reflUVW;
+    half reflectionFallbackMultiplier;
+};
+
+// GGX specular
+half GGXNormalDistribution(half roughness, half NdotH) {
+    // UnityStandardBRDF: // GGX with roughtness to 0 would mean no specular at all, using max(roughness, 0.002) here to match HDrenderloop roughtness remapping.
+    //roughness = max(roughness, 0.002);
+    half roughnessSqr = roughness*roughness;
+    half NdotHSqr = NdotH*NdotH;
+    half TanNdotHSqr = (1-NdotHSqr)/NdotHSqr;
+    return (1.0/3.1415926535) * sqr(roughness/(NdotHSqr * (roughnessSqr + TanNdotHSqr)));
+}
+
+// Smith Joint GGX Anisotropic Visibility
+// Taken from https://cedec.cesa.or.jp/2015/session/ENG/14698.html
+float SmithJointGGXAnisotropic(float TdotV, float BdotV, float NdotV, float TdotL, float BdotL, float NdotL, float roughnessX, float roughnessY)
+{
+  // A value of zero breaks
+	float aT = max(0.000001, roughnessX);
+	float aT2 = aT * aT;
+	float aB = max(0.000001, roughnessY);
+	float aB2 = aB * aB;
+
+	float lambdaV = NdotL * sqrt(aT2 * TdotV * TdotV + aB2 * BdotV * BdotV + NdotV * NdotV);
+	float lambdaL = NdotV * sqrt(aT2 * TdotL * TdotL + aB2 * BdotL * BdotL + NdotL * NdotL);
+
+	
+  float visibility = saturate(0.5 / (lambdaV + lambdaL));
+  
+  return visibility;
+}
+
+// Anisotropic GGX
+// From HDRenderPipeline
+float D_GGXAnisotropic(float TdotH, float BdotH, float NdotH, float roughnessT, float roughnessB)
+{
+  roughnessT = max(0.000001, roughnessT);
+  roughnessB = max(0.000001, roughnessB);
+  
+	float f = TdotH * TdotH / (roughnessT * roughnessT) + BdotH * BdotH / (roughnessB * roughnessB) + NdotH * NdotH;
+	float aniso = 1.0 / (roughnessT * roughnessB * f * f);
+
+  return aniso;
+}
 
 // From Xiexe's Unity Shaders
 half3 getVertexLightsDir(float3 worldPos)

@@ -1,4 +1,4 @@
-Shader "Em/Toon/6.0/Opaque(HMD-Hue)" {
+Shader "Em/ToonPBS0.6/EmToonPBS0.6" {
     Properties {
         [Enum(Off,0,Front,1,Back,2)] _Culling ("Culling Mode", Int) = 2
         _Color ("Color", Color) = (1,1,1,1)

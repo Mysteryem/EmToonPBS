@@ -1,4 +1,4 @@
-Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
+Shader "Em/ToonPBS0.6/EmToonPBS0.6_Outlined" {
     Properties {
         [Enum(Off,0,Front,1,Back,2)] _Culling ("Culling Mode", Int) = 2
         _Color ("Color", Color) = (1,1,1,1)
@@ -118,6 +118,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
             
             #pragma vertex vert
             #pragma fragment frag
+            #pragma require geometry
             #pragma geometry geom
             
             // Testing/WIP
@@ -171,6 +172,7 @@ Shader "Em/Toon/6.0/Opaque(HMD-Hue)(Outline)" {
             
             #pragma vertex vert
             #pragma fragment frag
+            #pragma require geometry
             #pragma geometry geom
             //#pragma multi_compile_fwdadd_fullshadows
             #pragma multi_compile_fog
