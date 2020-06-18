@@ -216,5 +216,5 @@ Shader "Em/ToonPBS0.6/EmToonPBS0.6" {
         }
     }
     Fallback "Diffuse"
-    CustomEditor "EmToon6PBSShaderGUI"
+    CustomEditor "EmToonPBSShaderGUI"
 }
