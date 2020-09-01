@@ -35,6 +35,10 @@ public class EmToonPBSShaderGUI : ShaderGUI
     
     public static GUIContent normalMapText = new GUIContent("Normal Map", "Normal Map");
     public static GUIContent occlusionText = new GUIContent("Occlusion", "Occlusion (G)");
+    public static GUIContent occlusionMapText = new GUIContent("Occlusion/Rim Light Map", "Rim Light Smoothness (R), Occlusion (G), Rim Light Width (B), Rim Light Intensity (A)");
+    public static GUIContent rimLightSmoothnessText = new GUIContent("Rim Smoothness", "Rim Light Smoothness (R)");
+    public static GUIContent rimLightWidthText = new GUIContent("Rim Width", "Rim Light Width (B)");
+    public static GUIContent rimLightIntensityText = new GUIContent("Rim Intensity", "Rim Light Intensity (A)");
     
     public static GUIContent emissionText = new GUIContent("Color", "Emission (RGB)");
     
@@ -74,7 +78,7 @@ public class EmToonPBSShaderGUI : ShaderGUI
     public static GUIContent outlineWidthMaskText = new GUIContent("Outline Mask", "Width (R), Albedo Tint (G), Lit (B). Note that specular highlights and reflections are excluded from lit outlines.");
     public static GUIContent reflectionFallbackText = new GUIContent("Reflection Fallback", "Specify a cubemap to use as a fallback when a world has no reflection probes. The fallback should be well lit as it will be adjusted in brightness to match the environment");
     public static GUIContent useFallBackInsteadOfProbesText = new GUIContent("Replace Probes", "Use the specified fallback instead of using reflection probes from the world");
-    public static GUIContent diffuseControlMapText = new GUIContent("Diffuse Control", "Diffuse Smoothness (R), Diffuse Direction (G), View Direction Forwards Bias (B), **Velvet Boost** (A)");
+    public static GUIContent diffuseControlMapText = new GUIContent("Diffuse Control", "Diffuse Smoothness (R), Diffuse Direction (G), View Direction Forwards Bias (B)");
     public static GUIContent diffuseSmoothnessText = new GUIContent("Diffuse Smoothness", "Blend between sharp (toon-like) and smooth (standard-like) shading. This is done by adjusting vertex normals");
     public static GUIContent diffuseDirectionText = new GUIContent("Diffuse Direction", "Blend between using the light direction (0) to pick diffuse sampling directions and using the object view direction (1). Light direction won't change as the view of the avatar changes. Object view direction gives a rimlight-like effect. With either option, the lighting remains consistent if you rotate your head in-place." +
     "\n\nTo get a better idea of how this works, create a sphere, apply this material, set the Diffuse Smoothness to 0 and have only a single directional light in your scene, then move the Diffuse Direction slider between 0 (toon) to 1 (smooth). " + 
@@ -115,6 +119,11 @@ public class EmToonPBSShaderGUI : ShaderGUI
   MaterialProperty outlineAlbedoTint = null;
   MaterialProperty outlineLit = null;
   
+  // Custom - Rim Light
+  MaterialProperty rimLightSmoothness = null;
+  MaterialProperty rimLightWidth = null;
+  MaterialProperty rimLightIntensity = null;
+  
   // Custom - Advanced Options
   //MaterialProperty uvSetPrimary = null;
   MaterialProperty diffuseControlMap = null;
@@ -122,7 +131,6 @@ public class EmToonPBSShaderGUI : ShaderGUI
   MaterialProperty diffuseSmoothness = null;
   MaterialProperty diffuseDirection = null;
   MaterialProperty diffuseViewDirectionBias = null;
-  MaterialProperty viewDirectionDiffuseBoost = null;
   MaterialProperty shadowSharpness = null;
   MaterialProperty shadowLift = null;
   MaterialProperty specularSharpness = null;
@@ -213,6 +221,11 @@ public class EmToonPBSShaderGUI : ShaderGUI
       outlineLit = FindProperty("_OutlineLit", props);
   }
   
+  // Custom - Rim Light
+  rimLightSmoothness = FindProperty("_RimLightSmoothness", props);
+  rimLightWidth = FindProperty("_RimLightWidth", props);
+  rimLightIntensity = FindProperty("_RimLightIntensity", props);
+  
   // Custom - Advanced Options
   //MaterialProperty uvSetPrimary = null;
   saturationAdjust = FindProperty("_SaturationAdjustment", props);
@@ -221,7 +234,6 @@ public class EmToonPBSShaderGUI : ShaderGUI
   diffuseSmoothness = FindProperty("_DiffuseSoftness", props);
   diffuseDirection = FindProperty("_LightOrView", props);
   diffuseViewDirectionBias = FindProperty("_DiffuseViewPull", props);
-  viewDirectionDiffuseBoost = FindProperty("_ViewDirectionDiffuseBoost", props);
   
   shadowSharpness = FindProperty("_DynamicShadowSharpness", props);
   shadowLift = FindProperty("_DynamicShadowLift", props);
@@ -303,12 +315,8 @@ public class EmToonPBSShaderGUI : ShaderGUI
           //m_MaterialEditor.TexturePropertySingleLine(Styles.heightMapText, heightMap, heightMap.textureValue != null ? heigtMapScale : null);
           
           EditorGUILayout.Space();
-          if (m_OcclusionFoldout = EditorGUILayout.Foldout(m_OcclusionFoldout, "Occlusion/Rim Light", true)) {
-              bool hasOcculsionMap = occlusionMap.textureValue != null;
-              m_MaterialEditor.TexturePropertySingleLine(Styles.occlusionText, occlusionMap, hasOcculsionMap ? occlusionStrength : null);
-              if (hasOcculsionMap)
-                  m_MaterialEditor.TextureScaleOffsetProperty(occlusionMap);
-          }
+          if (m_OcclusionFoldout = EditorGUILayout.Foldout(m_OcclusionFoldout, "Occlusion/Rim Light", true))
+              DoCustomOcclusionRimLightArea();
           EditorGUILayout.Space();
           //DoEmissionArea(material);
           if (m_EmissionFoldout = EditorGUILayout.Foldout(m_EmissionFoldout, "Emission", true))
@@ -576,6 +584,23 @@ public class EmToonPBSShaderGUI : ShaderGUI
               m_MaterialEditor.TextureScaleOffsetProperty(outlineMask);
       }
   }
+  
+  void DoCustomOcclusionRimLightArea()
+  {
+      m_MaterialEditor.TexturePropertySingleLine(Styles.occlusionMapText, occlusionMap);
+      if (occlusionMap.textureValue != null)
+      {
+          m_MaterialEditor.TextureScaleOffsetProperty(diffuseControlMap); 
+          m_MaterialEditor.ShaderProperty(occlusionStrength, Styles.occlusionText);
+      }
+          
+      m_MaterialEditor.ShaderProperty(rimLightIntensity, Styles.rimLightIntensityText);
+      if (rimLightIntensity.floatValue != 0)
+      {
+        m_MaterialEditor.ShaderProperty(rimLightSmoothness, Styles.rimLightSmoothnessText);
+        m_MaterialEditor.ShaderProperty(rimLightWidth, Styles.rimLightWidthText);
+      }
+  }
 
   void DoCustomDiffuseControlArea()
   {
@@ -586,7 +611,6 @@ public class EmToonPBSShaderGUI : ShaderGUI
       m_MaterialEditor.ShaderProperty(diffuseDirection, Styles.diffuseDirectionText);
       if (diffuseDirection.floatValue != 0)
           m_MaterialEditor.ShaderProperty(diffuseViewDirectionBias, Styles.viewDirectionForwardsBiasText);
-      m_MaterialEditor.ShaderProperty(viewDirectionDiffuseBoost, "**Velvet Boost** (WIP)");
   }
   void DoCustomShadowsControlArea()
   {

@@ -24,7 +24,6 @@ uniform float4 _DiffuseControlMap_ST;
 uniform half _DiffuseViewPull;
 uniform fixed _DiffuseSoftness;
 uniform fixed _LightOrView;
-uniform half _ViewDirectionDiffuseBoost;
 
 uniform fixed _DynamicShadowSharpness;
 uniform fixed _DynamicShadowLift;
@@ -36,6 +35,9 @@ uniform half _BumpScale;
 uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_OcclusionMap);
 uniform float4 _OcclusionMap_ST;
 uniform half _OcclusionStrength;
+uniform half _RimLightSmoothness;
+uniform half _RimLightWidth;
+uniform half _RimLightIntensity;
 
 uniform fixed _Glossiness;
 uniform UNITY_DECLARE_TEX2D_NOSAMPLER(_MetallicGlossMap);
@@ -78,6 +80,12 @@ uniform half _OutlineAlbedoTint;
 uniform half _OutlineLit;
 #endif
 
+#if defined(Fur)
+uniform UNITY_DECLARE_TEX2D(_FurMask);
+uniform UNITY_DECLARE_TEX2D(_FurNoise);
+uniform UNITY_DECLARE_TEX2D(_FurTex);
+#endif
+
 struct VertexData {
     float4 vertex : POSITION;
     float2 texcoord0 : TEXCOORD0;
@@ -88,7 +96,7 @@ struct VertexData {
 };
 
 struct VertexOutput {
-#if defined(Geometry)
+#if defined(Geometry) || defined(Fur)
     float4 pos : CLIP_POS;
     float4 vertex : SV_POSITION;
 #else
@@ -106,7 +114,7 @@ struct VertexOutput {
     UNITY_FOG_COORDS(9)
 };
 
-#if defined(Geometry)
+#if defined(Geometry) || defined(Fur)
     struct v2g
     {
         float4 pos : CLIP_POS;
@@ -141,12 +149,40 @@ struct VertexOutput {
 
 VertexOutput vert (VertexData v) {
     VertexOutput o = (VertexOutput)0;
-    #if defined(Geometry)
+    #if defined(Geometry) || defined(Fur)
         o.vertex = v.vertex;
     #endif
     
-    o.pos = UnityObjectToClipPos( v.vertex );
+    /*float progress = abs(_CosTime.w);
+    
+    //[0-1] -> -1 -> 1
+    float swallowPointOffset = (progress * 2 * 1.2) - 1;
+    
+    float3 swallowPoint = float3(v.vertex.x,swallowPointOffset,v.vertex.z);
+    float3 towardsOrigin = swallowPoint-v.vertex;//objectOrigin - v.vertex;
+    
+    
+    float swallowDistance = 2*1-abs(_CosTime.w);
+    
+    //progress *= saturate(1-pow(distanceFromOrigin,));
+    
+    //progress = saturate(1-pow(1-progress, 20));
+    
+    progress = swallowPoint.y > v.vertex.y;
+    float shrinkActive = swallowPoint.y - 0.3 > v.vertex.y;
+    
+    float3 offset = progress * towardsOrigin;
+    offset.x = -v.vertex.x * shrinkActive;
+    offset.z = -v.vertex.z * shrinkActive;
+    // Minor offset that is bigger the further the distance from (0,-1,0) to avoid z-fighting
+    offset.y += (v.vertex.y - -1) * 0.002 * progress;
+    
+    o.pos = UnityObjectToClipPos( v.vertex + offset);
+    o.posWorld = mul(unity_ObjectToWorld, v.vertex + offset);
+    */
+    o.pos = UnityObjectToClipPos( v.vertex);
     o.posWorld = mul(unity_ObjectToWorld, v.vertex);
+    
     half tangentSign = v.tangent.w * unity_WorldTransformParams.w;
     o.normalDir = UnityObjectToWorldNormal(v.normal);
     o.tangentDir = UnityObjectToWorldDir(v.tangent.xyz);
@@ -160,6 +196,9 @@ VertexOutput vert (VertexData v) {
 
     UNITY_TRANSFER_SHADOW(o, o.uv);
     UNITY_TRANSFER_FOG(o, o.pos);
+    
+    
+    
 
     return o;
 }
@@ -227,6 +266,80 @@ VertexOutput vert (VertexData v) {
     }
 #endif
 
+#ifndef FurLayers
+  #define FurLayers 5
+#endif
+#if FurLayers < 0
+  #define FurLayers 0
+#endif
+
+#if defined(Fur)
+    [maxvertexcount(3 + FurLayers * 3)]
+    void geom(triangle v2g IN[3], inout TriangleStream<g2f> tristream)
+    {
+        g2f o;
+        
+        // todo: Make material property
+        const float shellDistance = 0.01;
+        
+        // todo: reduce number of furlayers used the further the camera is from the vertex
+        for (int furLayer = 0; furLayer < FurLayers; furLayer++)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                float4 posWorld = (mul(unity_ObjectToWorld, IN[i].vertex));
+                float shellWidth = shellDistance * furLayer * min(distance(posWorld, _WorldSpaceCameraPos) * 3, 1);
+                float4 shellPos = float4(IN[i].vertex + normalize(IN[i].normal) * shellWidth, 1);
+                
+                o.pos = UnityObjectToClipPos(shellPos);
+                o.posWorld = posWorld;
+                o.normalDir = IN[i].normalDir;
+                o.tangentDir = IN[i].tangentDir;
+                o.bitangentDir = IN[i].bitangentDir;
+                o.tex = float4(IN[i].uv0, IN[i].uv1);
+                //o.tex.uv = IN[i].uv0;
+                //o.tex.zw = IN[i].uv1;
+                o.color = float4(IN[i].color.rgb, 1); // store if outline in alpha channel of vertex colors | 1 = is an outline
+                o.screenPos = ComputeScreenPos(o.pos);
+            
+                #if defined (SHADOWS_SCREEN) || ( defined (SHADOWS_DEPTH) && defined (SPOT) ) || defined (SHADOWS_CUBE)
+                    o._ShadowCoord = IN[i]._ShadowCoord; //Can't use TRANSFER_SHADOW() macro here
+                #endif
+                UNITY_TRANSFER_FOG(o, o.pos);
+                tristream.Append(o);
+                }
+                tristream.RestartStrip();
+        }
+        
+        //uniform UNITY_DECLARE_TEX2D(_FurMask);
+        //uniform UNITY_DECLARE_TEX2D(_FurNoise);
+        //uniform UNITY_DECLARE_TEX2D(_FurTex);
+        
+        //Main Mesh loop
+        for (int j = 0; j < 3; j++)
+        {
+            o.pos = UnityObjectToClipPos(IN[j].vertex);
+            o.posWorld = IN[j].posWorld;
+            o.normalDir = IN[j].normalDir;
+            o.tangentDir = IN[j].tangentDir;
+            o.bitangentDir = IN[j].bitangentDir;
+            o.tex = float4(IN[j].uv0, IN[j].uv1);
+            //o.tex.uv = IN[j].uv0;
+            //o.tex.zw = IN[j].uv1;
+            o.color = float4(IN[j].color.rgb,0); // store if outline in alpha channel of vertex colors | 0 = not an outline
+            o.screenPos = ComputeScreenPos(o.pos);
+        
+            #if defined (SHADOWS_SCREEN) || ( defined (SHADOWS_DEPTH) && defined (SPOT) ) || defined (SHADOWS_CUBE)
+                o._ShadowCoord = IN[j]._ShadowCoord; //Can't use TRANSFER_SHADOW() or UNITY_TRANSFER_SHADOW() macros here, could use custom versions of them
+                //o._LightCoord = IN[j]._LightCoord;
+            #endif
+            UNITY_TRANSFER_FOG(o, o.pos);
+            tristream.Append(o);
+        }
+        tristream.RestartStrip();
+    }
+#endif
+
 half4 frag(
 #if defined(Geometry)
             g2f i
@@ -257,17 +370,18 @@ half4 frag(
     half3 lightColor = _LightColor0.rgb;
     
     half4 sampledOcclusion = UNITY_SAMPLE_TEX2D_SAMPLER(_OcclusionMap, _MainTex, TRANSFORM_TEX(mainUV, _OcclusionMap));
-    half UNUSED_r = sampledOcclusion.r;
-    half occlusion = LerpOneTo(sampledOcclusion.g, _OcclusionStrength);
-    half UNUSED_b = sampledOcclusion.b;
-    half UNUSED_a = sampledOcclusion.a;
+    _RimLightSmoothness *= sampledOcclusion.r;
+    // Occlusion on G mimics standard shader
+    half occlusion = LerpOneTo(sampledOcclusion.g, _OcclusionStrength) * i.color.r;
+    _RimLightWidth *= sampledOcclusion.b;
+    _RimLightIntensity *= sampledOcclusion.a;
 
 #if defined(Geometry)
     half4 sampledOutlineMask = UNITY_SAMPLE_TEX2D_SAMPLER(_OutlineMask, _MainTex, TRANSFORM_TEX(mainUV, _OutlineMask));
     // red is outline width which is used in the geometry function
     half outlineAlbedoMultiplied = sampledOutlineMask.g * _OutlineAlbedoTint;
     half outlineLit = sampledOutlineMask.b * _OutlineLit;
-    // alpha is currently unused, but perhaps it could be used to control whether outlines decrease in width when the camera gets close? (would be used in the geometry function and not here)
+    half outlineMaskAlpha = sampledOutlineMask.a;
 #endif
 
     
@@ -277,8 +391,7 @@ half4 frag(
     _LightOrView *= sampledDiffuseControl.g;
     // [0,1] -> [0,1.5], there's no point to go higher than 1.5, all of the visible normals end up facing the view
     _DiffuseViewPull *= 1.5 * sampledDiffuseControl.b;
-    // [0,1] -> [0,10], maybe could allow higher than 10, especially for darker surfaces? Or maybe it would be better if the diffuse colour didn't affect this boost so much?
-    _ViewDirectionDiffuseBoost *= 10 * sampledDiffuseControl.a;
+    //unused = sampledDiffuseControl.a
     
     // r = metallic
     // g = smoothnessY
@@ -379,6 +492,10 @@ half4 frag(
     half cameraForwardsPull = _DiffuseViewPull;//0.4;
     half lightOrCamera = _LightOrView;//0.5;
     
+    // ---- Velvet/Rim
+    half3 bakedVelvetLight = 0;
+    half3 dynamicVelvetLight = 0;
+    
 
     // ------- Baked diffuse light
 #if defined(UNITY_PASS_FORWARDBASE)
@@ -387,8 +504,8 @@ half4 frag(
 
     half3 bakedLightComponent = EmSHDiffuse(doubleSidedNormals, cameraForwardsPull, vCamera, vLight, diffuseSoftness, lightOrCamera);
     
-    half3 velvetColour = 1.5*ShadeSH9(velvetDirection);
-    bakedLightComponent = lerp(bakedLightComponent, lerp(bakedLightComponent, max(velvetColour, bakedLightComponent), _ViewDirectionDiffuseBoost), pow(fresnel,4));
+    bakedVelvetLight = ShadeSH9(velvetDirection);
+    
 #else
     // SH lighting is only applied in the base pass
     half3 bakedLightComponent = 0;
@@ -434,12 +551,8 @@ half4 frag(
     
     dynamicLightComponent = EmDynamicDiffuse(dynamicLight, lightDirection, doubleSidedNormals, cameraForwardsPull, vCamera, vLight, diffuseSoftness, lightOrCamera);
 
-    half3 velvetLight = 1.5*dynamicLight * saturate(0.5 * (0.5 + dot(-xiexeLightDir, velvetDirection)));
+    dynamicVelvetLight = dynamicLight * saturate(0.5 * (0.5 + dot(-xiexeLightDir, velvetDirection)));
     
-    dynamicLightComponent = lerp(
-      dynamicLightComponent,
-      lerp(dynamicLightComponent, max(velvetLight, dynamicLightComponent), _ViewDirectionDiffuseBoost),
-      pow(fresnel,4));
 //#endif
 
     // ------- Vertex Lights
@@ -498,7 +611,7 @@ half4 frag(
     // TODO?: Allow using a second texture that is used as light decreases?
     //half lowLightTexturePick = saturate(1-pow(max(0,grayscale(finalDiffuseLight)*2-1), 1));
     //fixed4 sampledMainTexture = lerp(UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)), UNITY_SAMPLE_TEX2D_SAMPLER(_LowLightTex,_MainTex, TRANSFORM_TEX(mainUV, _LowLightTex)), lowLightTexturePick);
-    fixed4 sampledMainTexture = UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)) * _Color * half4(i.color.rgb, 1);
+    fixed4 sampledMainTexture = UNITY_SAMPLE_TEX2D(_MainTex, TRANSFORM_TEX(mainUV, _MainTex)) * _Color/* * half4(i.color.rgb, 1)*/;
 #if defined(Geometry)
     if(isOutline) {
         sampledMainTexture = lerp(half4(i.color.rgb, 1), sampledMainTexture, outlineAlbedoMultiplied);
@@ -703,6 +816,21 @@ half4 frag(
 
    
     half3 finalDiffuse = fragmentCommonData.diffColor * finalDiffuseLight;
+#if defined(Geometry)
+    if (!isOutline) {
+    // Velvet light mimics light passing through the edge of fuzzy/furry materials
+    half velvetFresnel = SpecialRemap(_RimLightSmoothness, _RimLightWidth, fresnel);
+    
+    //half3 combinedVelvetAndDiffuse = max(bakedVelvetLight + dynamicVelvetLight, finalDiffuse)
+    half3 combinedVelvetAndDiffuse = (bakedVelvetLight + dynamicVelvetLight) * velvetFresnel * _RimLightIntensity + finalDiffuse;
+    finalDiffuse = combinedVelvetAndDiffuse;
+    // TODO: Can't _RimLightIntensity and velvetFresnel be multiplied first and then only the outer lerp() be used?
+    //finalDiffuse = lerp(
+//      finalDiffuse,
+      //lerp(finalDiffuse, combinedVelvetAndDiffuse, _RimLightIntensity),
+      //velvetFresnel);
+    }
+#endif
     
     // Removes indirect lighting from reflection probes in nearly unlit to completely unlit environments
     #if defined(UNITY_PASS_FORWARDBASE)
@@ -754,10 +882,21 @@ half4 frag(
     //half4 debugValue = half4(debugValue3, 1);
     //return max(0, half4(finalColor,1) * 0.001 - 1) + dot(doubleSidedNormals, i.vCameraPosX);
     
+
     
-    //return max(0, half4(finalColor,1) * 0.001 - 12) + grayscale(albedoComponent);
+    //return max(0, half4(finalColor,1) * 0.001 - 12) + half4(debugG, debugG, debugG,1);
     //#else
+    // TODO: Outline alpha when using cutout
 #if defined(_ALPHABLEND_ON) || defined(_ALPHAPREMULTIPLY_ON)
+    #if defined(Geometry)
+        // Alpha to use if multiplied by albedo colour
+        half albedoMultipliedAlpha = lerp(sampledMainTexture.a, outputAlpha, outlineLit);
+        half outlineAlpha = lerp(_OutlineColor.a, _OutlineColor.a * albedoMultipliedAlpha, outlineAlbedoMultiplied);
+        outlineAlpha *= outlineMaskAlpha;
+        if (isOutline) {
+            outputAlpha = outlineAlpha;
+        }
+    #endif
     return half4(finalColor,outputAlpha);
 #else
     return half4(finalColor,1);

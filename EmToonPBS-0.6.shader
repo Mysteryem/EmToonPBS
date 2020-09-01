@@ -25,7 +25,6 @@ Shader "Em/ToonPBS0.6/EmToonPBS0.6" {
         _DiffuseSoftness ("Diffuse Smoothness (R)", Range(0, 1)) = 0
         _LightOrView ("Diffuse Light(0)/View(1) Direction Blend (G)", Range(0, 1)) = 0.5
         _DiffuseViewPull ("View Direction Pull (B)", Range(0, 1)) = 0.27
-        _ViewDirectionDiffuseBoost ("Velvet Boost (A)", Range(0,1)) = 0
         _DynamicShadowSharpness ("Dynamic Shadow Sharpness", Range(0, 1)) = 1
         _DynamicShadowLift ("Dynamic Shadow Lift", Range(0, 1)) = 0.3
         [HDR]_SpecularColour ("Specular Colour", Color) = (1,1,1,1)
@@ -37,8 +36,11 @@ Shader "Em/ToonPBS0.6/EmToonPBS0.6" {
         [Normal]_BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Map Strength", Float ) = 1
         
-        _OcclusionMap("Occlusion Strength (G)", 2D) = "white" {}
+        _OcclusionMap("Occlusion Strength (G), Rim light smoothness (R), Rim light width (B), Rim light intensity (A)", 2D) = "white" {}
         _OcclusionStrength("Strength", Range(0.0, 1.0)) = 1.0
+        _RimLightSmoothness("Rim Light Smoothness", Range(0.0, 1.0)) = 0
+        _RimLightWidth("Rim Light Width", Range(0.0, 1.0)) = 0.6
+        _RimLightIntensity("Rim Light Intensity", Range(0.0, 1.0)) = 0
         
         _DetailMask("Detail Mask", 2D) = "white" {}
         
