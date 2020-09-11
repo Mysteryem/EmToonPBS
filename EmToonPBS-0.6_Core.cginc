@@ -818,17 +818,20 @@ half4 frag(
     half3 finalDiffuse = fragmentCommonData.diffColor * finalDiffuseLight;
 #if defined(Geometry)
     if (!isOutline) {
+#endif
     // Velvet light mimics light passing through the edge of fuzzy/furry materials
     half velvetFresnel = SpecialRemap(_RimLightSmoothness, _RimLightWidth, fresnel);
+    //velvetFresnel = pow(fresnel,4);
     
     //half3 combinedVelvetAndDiffuse = max(bakedVelvetLight + dynamicVelvetLight, finalDiffuse)
-    half3 combinedVelvetAndDiffuse = (bakedVelvetLight + dynamicVelvetLight) * velvetFresnel * _RimLightIntensity + finalDiffuse;
+    half3 combinedVelvetAndDiffuse = 1.5 * (bakedVelvetLight + dynamicVelvetLight) * velvetFresnel * _RimLightIntensity + finalDiffuse;
     finalDiffuse = combinedVelvetAndDiffuse;
     // TODO: Can't _RimLightIntensity and velvetFresnel be multiplied first and then only the outer lerp() be used?
     //finalDiffuse = lerp(
 //      finalDiffuse,
       //lerp(finalDiffuse, combinedVelvetAndDiffuse, _RimLightIntensity),
       //velvetFresnel);
+#if defined(Geometry)
     }
 #endif
     
